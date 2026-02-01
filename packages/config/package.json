@@ -1,0 +1,15 @@
+{
+  "name": "@opencode/config",
+  "version": "1.0.0",
+  "description": "Shared configuration files for ESLint, TypeScript, etc.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./eslint": "./eslint.config.js",
+    "./tsconfig": "./tsconfig.base.json"
+  },
+  "devDependencies": {
+    "eslint": "^9.19.0",
+    "typescript": "^5.7.3"
+  }
+}

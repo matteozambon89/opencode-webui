@@ -1,0 +1,41 @@
+{
+  "name": "opencode-ui-acp",
+  "version": "1.0.0",
+  "description": "Browser-based remote GUI for OpenCode using the Agent Client Protocol (ACP)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --parallel dev",
+    "build": "pnpm --parallel build",
+    "test": "pnpm --parallel test",
+    "test:watch": "pnpm --parallel test:watch",
+    "typecheck": "pnpm --parallel typecheck",
+    "lint": "pnpm --parallel lint",
+    "lint:fix": "pnpm --parallel lint:fix",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:build": "docker-compose build",
+    "docker:dev": "docker-compose --profile dev up -d"
+  },
+  "keywords": [
+    "opencode",
+    "acp",
+    "agent-client-protocol",
+    "ai",
+    "chat",
+    "websocket",
+    "react",
+    "fastify"
+  ],
+  "author": "OpenCode UI ACP Contributors",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
