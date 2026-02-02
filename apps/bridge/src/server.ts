@@ -7,11 +7,12 @@ import { healthRoutes } from './routes/health.js';
 import { authRoutes } from './routes/auth.js';
 import { websocketRoutes } from './routes/websocket.js';
 import { errorHandler } from './middleware/error-handler.js';
-import { logger } from './utils/logger.js';
 
 export async function createServer() {
   const app = Fastify({
-    logger: logger,
+    logger: {
+      level: process.env.LOG_LEVEL || 'info'
+    },
     trustProxy: true
   });
 
