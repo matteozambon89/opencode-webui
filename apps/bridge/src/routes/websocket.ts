@@ -1,8 +1,10 @@
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import type { SocketStream } from '@fastify/websocket';
 import type { FastifyRequest } from 'fastify';
+import type { JSONRPCNotification } from '@opencode/shared/types/acp';
 import { verifyToken } from './auth.js';
 import { logger } from '../utils/logger.js';
+import { acpHandler } from '../modules/protocol-handler/index.js';
 import { v4 as uuidv4 } from 'uuid';
 
 // Store active WebSocket connections
@@ -85,8 +87,7 @@ export async function websocketRoutes(
       
       // Clean up associated sessions
       wsConnection.sessionIds.forEach(sessionId => {
-        // TODO: Close OpenCode processes for this session
-        logger.info(`Cleaning up session: ${sessionId}`);
+        acpHandler.closeSession(sessionId);
       });
     });
     
@@ -110,21 +111,168 @@ export async function websocketRoutes(
   });
 }
 
-async function handleMessage(connectionId: string, message: unknown): Promise<void> {
+async function handleMessage(connectionId: string, message: BridgeClientMessage): Promise<void> {
   const connection = connections.get(connectionId);
   if (!connection) {
     logger.error(`Connection not found: ${connectionId}`);
     return;
   }
   
-  // TODO: Route message to appropriate ACP handler
-  logger.info(`Received message from ${connectionId}:`, message);
+  const { type, payload } = message;
   
-  // Echo for now (will be replaced with ACP protocol handling)
-  connection.socket.send(JSON.stringify({
-    type: 'acp_response',
-    payload: { echo: message }
-  }));
+  try {
+    switch (type) {
+      case 'acp:initialize': {
+        const result = await acpHandler.initialize(
+          connectionId,
+          connection.userId,
+          payload
+        );
+        
+        if (result.success && result.protocolVersion) {
+          connection.socket.send(JSON.stringify({
+            type: 'acp:initialized',
+            payload: {
+              protocolVersion: result.protocolVersion,
+              agentCapabilities: result.agentCapabilities
+            }
+          }));
+        } else {
+          connection.socket.send(JSON.stringify({
+            type: 'acp:error',
+            error: { code: 'INIT_FAILED', message: result.error || 'Initialization failed' }
+          }));
+        }
+        break;
+      }
+      
+      case 'acp:session:new': {
+        const result = await acpHandler.createSession(
+          connectionId,
+          connection.userId,
+          payload
+        );
+        
+        if (result.success && result.sessionId) {
+          connection.sessionIds.add(result.sessionId);
+          
+          // Register notification handler for this session
+          acpHandler.onNotification(result.sessionId, (notification) => {
+            handleSessionNotification(connectionId, result.sessionId!, notification);
+          });
+          
+          connection.socket.send(JSON.stringify({
+            type: 'acp:session:created',
+            payload: { sessionId: result.sessionId }
+          }));
+        } else {
+          connection.socket.send(JSON.stringify({
+            type: 'acp:error',
+            error: { code: 'SESSION_CREATE_FAILED', message: result.error || 'Failed to create session' }
+          }));
+        }
+        break;
+      }
+      
+      case 'acp:session:prompt': {
+        const { sessionId, content } = payload;
+        const result = await acpHandler.sendPrompt(sessionId, content);
+        
+        if (!result.success) {
+          connection.socket.send(JSON.stringify({
+            type: 'acp:error',
+            error: { code: 'PROMPT_FAILED', message: result.error || 'Failed to send prompt' }
+          }));
+        }
+        // Successful prompts get responses via notifications (streaming)
+        break;
+      }
+      
+      case 'acp:session:cancel': {
+        const { sessionId } = payload;
+        await acpHandler.cancelSession(sessionId);
+        connection.socket.send(JSON.stringify({
+          type: 'acp:session:cancelled',
+          payload: { sessionId }
+        }));
+        break;
+      }
+      
+      case 'acp:session:close': {
+        const { sessionId } = payload;
+        await acpHandler.closeSession(sessionId);
+        connection.sessionIds.delete(sessionId);
+        connection.socket.send(JSON.stringify({
+          type: 'acp:session:closed',
+          payload: { sessionId }
+        }));
+        break;
+      }
+      
+      case 'ping': {
+        connection.socket.send(JSON.stringify({ type: 'pong' }));
+        break;
+      }
+      
+      default: {
+        logger.warn(`Unknown message type: ${type}`);
+        connection.socket.send(JSON.stringify({
+          type: 'error',
+          error: { code: 'UNKNOWN_TYPE', message: `Unknown message type: ${type}` }
+        }));
+      }
+    }
+  } catch (error) {
+    logger.error(`Error handling message type ${type}:`, error);
+    connection.socket.send(JSON.stringify({
+      type: 'error',
+      error: { 
+        code: 'INTERNAL_ERROR', 
+        message: error instanceof Error ? error.message : 'Internal server error' 
+      }
+    }));
+  }
+}
+
+function handleSessionNotification(
+  connectionId: string, 
+  sessionId: string, 
+  notification: JSONRPCNotification
+): void {
+  const connection = connections.get(connectionId);
+  if (!connection) {
+    return;
+  }
+  
+  // Forward session/update notifications to the client
+  if (notification.method === 'session/update') {
+    connection.socket.send(JSON.stringify({
+      type: 'acp:session:update',
+      payload: {
+        sessionId,
+        update: notification.params
+      }
+    }));
+  } else if (notification.method === 'session/prompt') {
+    // This is the final response to a prompt
+    connection.socket.send(JSON.stringify({
+      type: 'acp:session:completed',
+      payload: {
+        sessionId,
+        result: notification.params
+      }
+    }));
+  } else {
+    // Other notifications
+    connection.socket.send(JSON.stringify({
+      type: 'acp:notification',
+      payload: {
+        sessionId,
+        method: notification.method,
+        params: notification.params
+      }
+    }));
+  }
 }
 
 export function getConnection(connectionId: string): WebSocketConnection | undefined {
@@ -137,3 +285,12 @@ export function broadcastToConnection(connectionId: string, message: unknown): v
     connection.socket.socket.send(JSON.stringify(message));
   }
 }
+
+// Message types from client
+type BridgeClientMessage =
+  | { type: 'acp:initialize'; payload: { protocolVersion: number; clientInfo: { name: string; version: string }; capabilities?: unknown } }
+  | { type: 'acp:session:new'; payload?: { cwd?: string } }
+  | { type: 'acp:session:prompt'; payload: { sessionId: string; content: Array<{ type: string; text?: string }> } }
+  | { type: 'acp:session:cancel'; payload: { sessionId: string } }
+  | { type: 'acp:session:close'; payload: { sessionId: string } }
+  | { type: 'ping' };

@@ -4,6 +4,7 @@ import { Layout } from './components/Layout/Layout';
 import { LoginPage } from './components/LoginPage';
 import { ChatPage } from './components/Chat/ChatPage';
 import { WebSocketProvider } from './context/WebSocketContext';
+import { ACPProvider } from './context/ACPContext';
 
 function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
@@ -30,12 +31,14 @@ function App() {
 
   return (
     <WebSocketProvider token={token}>
-      <Layout onLogout={handleLogout}>
-        <Routes>
-          <Route path="/" element={<ChatPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Layout>
+      <ACPProvider>
+        <Layout onLogout={handleLogout}>
+          <Routes>
+            <Route path="/" element={<ChatPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Layout>
+      </ACPProvider>
     </WebSocketProvider>
   );
 }

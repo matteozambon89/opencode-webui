@@ -1,18 +1,25 @@
 import React, { useState, useRef } from 'react';
-import { Send, Paperclip } from 'lucide-react';
+import { Send, Square, Paperclip } from 'lucide-react';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
+  onCancel: () => void;
   isStreaming: boolean;
+  disabled?: boolean;
 }
 
-export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isStreaming }) => {
+export const ChatInput: React.FC<ChatInputProps> = ({ 
+  onSendMessage, 
+  onCancel, 
+  isStreaming,
+  disabled = false 
+}) => {
   const [message, setMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (message.trim() && !isStreaming) {
+    if (message.trim() && !isStreaming && !disabled) {
       onSendMessage(message.trim());
       setMessage('');
       if (textareaRef.current) {
@@ -50,27 +57,38 @@ export const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isStreaming
           value={message}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder="Type your message... (Shift+Enter for new line)"
-          disabled={isStreaming}
-          className="input min-h-[44px] max-h-[200px] resize-none pr-10"
+          placeholder={disabled ? "Create a session to start chatting..." : "Type your message... (Shift+Enter for new line)"}
+          disabled={isStreaming || disabled}
+          className="input min-h-[44px] max-h-[200px] resize-none pr-10 disabled:opacity-50"
           rows={1}
         />
         <button
           type="button"
           onClick={handleFileUpload}
-          disabled={isStreaming}
+          disabled={isStreaming || disabled}
           className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
         >
           <Paperclip className="w-5 h-5" />
         </button>
       </div>
-      <button
-        type="submit"
-        disabled={!message.trim() || isStreaming}
-        className="btn-primary flex-shrink-0 disabled:opacity-50"
-      >
-        <Send className="w-5 h-5" />
-      </button>
+      
+      {isStreaming ? (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="btn bg-red-100 text-red-700 hover:bg-red-200 flex-shrink-0"
+        >
+          <Square className="w-5 h-5 fill-current" />
+        </button>
+      ) : (
+        <button
+          type="submit"
+          disabled={!message.trim() || disabled}
+          className="btn-primary flex-shrink-0 disabled:opacity-50"
+        >
+          <Send className="w-5 h-5" />
+        </button>
+      )}
     </form>
   );
 };
