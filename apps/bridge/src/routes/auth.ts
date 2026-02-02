@@ -52,7 +52,7 @@ export async function authRoutes(
         error: 'Invalid credentials'
       });
     } catch (error) {
-      logger.error('Login error:', error);
+      logger.error(error);
       return reply.status(400).send({
         success: false,
         error: 'Invalid request'

@@ -14,7 +14,7 @@ async function main() {
     logger.info(`WebSocket endpoint: ws://${HOST}:${PORT}/ws`);
     logger.info(`Health check: http://${HOST}:${PORT}/health`);
   } catch (error) {
-    logger.error('Failed to start server:', error);
+    logger.error(error);
     process.exit(1);
   }
 }

@@ -1,8 +1,8 @@
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn } from 'child_process';
 import { createInterface } from 'readline';
 import { logger } from '../../utils/logger.js';
 import type { OpenCodeProcess, ProcessMessageHandler, ProcessStatus } from './types.js';
-import type { JSONRPCMessage, JSONRPCRequest } from '@opencode/shared/types/acp';
+import type { JSONRPCMessage } from '@opencode/shared';
 
 export class OpenCodeProcessManager {
   private processes = new Map<string, OpenCodeProcess>();
@@ -16,7 +16,7 @@ export class OpenCodeProcessManager {
       return existing;
     }
 
-    logger.info(`Spawning opencode acp process for session ${sessionId}`, { cwd });
+    logger.info({ cwd }, `Spawning opencode acp process for session ${sessionId}`);
 
     // Detect opencode command
     const opencodeCommand = await this.detectOpenCodeCommand();
@@ -26,7 +26,7 @@ export class OpenCodeProcessManager {
       args.push('--cwd', cwd);
     }
 
-    const process = spawn(opencodeCommand, args, {
+    const childProcess = spawn(opencodeCommand, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
@@ -37,7 +37,7 @@ export class OpenCodeProcessManager {
 
     const processInfo: OpenCodeProcess = {
       sessionId,
-      process,
+      process: childProcess,
       status: 'initializing',
       cwd,
     };
@@ -46,7 +46,7 @@ export class OpenCodeProcessManager {
 
     // Handle stdout for JSON-RPC messages
     const rl = createInterface({
-      input: process.stdout!,
+      input: childProcess.stdout!,
       crlfDelay: Infinity,
     });
 
@@ -55,7 +55,7 @@ export class OpenCodeProcessManager {
     });
 
     // Handle stderr for logging
-    process.stderr!.on('data', (data: Buffer) => {
+    childProcess.stderr!.on('data', (data: Buffer) => {
       const output = data.toString().trim();
       if (output) {
         logger.debug(`OpenCode stderr [${sessionId}]: ${output}`);
@@ -63,7 +63,7 @@ export class OpenCodeProcessManager {
     });
 
     // Handle process exit
-    process.on('close', (code) => {
+    childProcess.on('close', (code: number | null) => {
       logger.info(`OpenCode process for session ${sessionId} exited with code ${code}`);
       processInfo.status = 'closed';
       const handler = this.handlers.get(sessionId);
@@ -74,8 +74,8 @@ export class OpenCodeProcessManager {
     });
 
     // Handle process errors
-    process.on('error', (error) => {
-      logger.error(`OpenCode process error for session ${sessionId}:`, error);
+    childProcess.on('error', (error: Error) => {
+      logger.error(error);
       processInfo.status = 'error';
       const handler = this.handlers.get(sessionId);
       if (handler) {
@@ -157,7 +157,7 @@ export class OpenCodeProcessManager {
         handler.onMessage(message);
       }
     } catch (error) {
-      logger.error(`Failed to parse JSON-RPC message from OpenCode [${sessionId}]:`, error);
+      logger.error(error);
       logger.debug(`Raw output: ${line}`);
     }
   }

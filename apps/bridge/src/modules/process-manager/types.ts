@@ -1,4 +1,4 @@
-import type { JSONRPCMessage, JSONRPCRequest, JSONRPCResponse, JSONRPCNotification } from '@opencode/shared/types/acp';
+import type { JSONRPCMessage } from '@opencode/shared';
 
 export interface OpenCodeProcess {
   sessionId: string;

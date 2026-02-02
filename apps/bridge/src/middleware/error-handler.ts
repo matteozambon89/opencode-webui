@@ -1,6 +1,4 @@
-import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
-import type { FastifyError } from 'fastify';
-import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyError, FastifyRequest, FastifyReply } from 'fastify';
 import { logger } from '../utils/logger.js';
 
 export function errorHandler(
@@ -8,7 +6,7 @@ export function errorHandler(
   _request: FastifyRequest,
   reply: FastifyReply
 ): void {
-  logger.error('Request error:', error);
+  logger.error(error);
   
   // Don't leak internal errors in production
   const isDev = process.env.NODE_ENV === 'development';

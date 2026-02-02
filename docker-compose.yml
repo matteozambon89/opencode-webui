@@ -30,26 +30,3 @@ services:
     depends_on:
       - bridge
     restart: unless-stopped
-
-  # Development services
-  bridge-dev:
-    build:
-      context: .
-      dockerfile: Dockerfile.bridge
-      target: builder
-    command: pnpm --filter @opencode/bridge dev
-    ports:
-      - "3001:3001"
-    volumes:
-      - .:/app
-      - /app/node_modules
-      - /app/apps/bridge/node_modules
-      - /app/packages/shared/node_modules
-    environment:
-      - NODE_ENV=development
-      - PORT=3001
-      - JWT_SECRET=${JWT_SECRET:-demo-secret-key-change-in-production}
-      - CORS_ORIGIN=http://localhost:5173
-      - LOG_LEVEL=debug
-    profiles:
-      - dev

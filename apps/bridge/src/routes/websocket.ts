@@ -1,7 +1,6 @@
-import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
-import type { SocketStream } from '@fastify/websocket';
-import type { FastifyRequest } from 'fastify';
-import type { JSONRPCNotification } from '@opencode/shared/types/acp';
+import type { FastifyInstance, FastifyPluginOptions, FastifyRequest } from 'fastify';
+import type { JSONRPCNotification } from '@opencode/shared';
+import type { WebSocket } from 'ws';
 import { verifyToken } from './auth.js';
 import { logger } from '../utils/logger.js';
 import { acpHandler } from '../modules/protocol-handler/index.js';
@@ -12,7 +11,7 @@ const connections = new Map<string, WebSocketConnection>();
 
 interface WebSocketConnection {
   id: string;
-  socket: SocketStream;
+  socket: WebSocket;
   userId: string;
   username: string;
   sessionIds: Set<string>;
@@ -24,28 +23,28 @@ export async function websocketRoutes(
   _options: FastifyPluginOptions
 ): Promise<void> {
   
-  app.get('/ws', { websocket: true }, (connection: SocketStream, req: FastifyRequest) => {
+  app.get('/ws', { websocket: true }, (socket, req: FastifyRequest) => {
     // Verify JWT from query parameter
     const url = new URL(req.url, 'http://localhost');
     const token = url.searchParams.get('token');
     
     if (!token) {
       logger.warn('WebSocket connection attempted without token');
-      connection.socket.close(1008, 'Authentication required');
+      socket.close(1008, 'Authentication required');
       return;
     }
     
     const user = verifyToken(token);
     if (!user) {
       logger.warn('WebSocket connection attempted with invalid token');
-      connection.socket.close(1008, 'Invalid token');
+      socket.close(1008, 'Invalid token');
       return;
     }
     
     const connectionId = uuidv4();
     const wsConnection: WebSocketConnection = {
       id: connectionId,
-      socket: connection,
+      socket: socket,
       userId: user.userId,
       username: user.username,
       sessionIds: new Set(),
@@ -56,19 +55,19 @@ export async function websocketRoutes(
     logger.info(`WebSocket connected: ${connectionId} (user: ${user.username})`);
     
     // Send connection success message
-    connection.socket.send(JSON.stringify({
+    socket.send(JSON.stringify({
       type: 'connection_status',
       payload: { status: 'connected', connectionId }
     }));
     
     // Handle incoming messages
-    connection.socket.on('message', (data: Buffer) => {
+    socket.on('message', (data: Buffer) => {
       try {
         const message = JSON.parse(data.toString());
         handleMessage(connectionId, message);
       } catch (error) {
-        logger.error('Invalid WebSocket message:', error);
-        connection.socket.send(JSON.stringify({
+        logger.error(error);
+        socket.send(JSON.stringify({
           type: 'error',
           error: { code: 'INVALID_MESSAGE', message: 'Invalid JSON message' }
         }));
@@ -76,12 +75,12 @@ export async function websocketRoutes(
     });
     
     // Handle ping/pong for connection health
-    connection.socket.on('ping', () => {
+    socket.on('ping', () => {
       wsConnection.isAlive = true;
     });
     
     // Handle close
-    connection.socket.on('close', () => {
+    socket.on('close', () => {
       logger.info(`WebSocket disconnected: ${connectionId}`);
       connections.delete(connectionId);
       
@@ -95,17 +94,17 @@ export async function websocketRoutes(
     const heartbeatInterval = setInterval(() => {
       if (!wsConnection.isAlive) {
         logger.warn(`Connection ${connectionId} timed out`);
-        connection.socket.terminate();
+        socket.terminate();
         clearInterval(heartbeatInterval);
         return;
       }
       
       wsConnection.isAlive = false;
-      connection.socket.ping();
+      socket.ping();
     }, 30000);
     
     // Clean up interval on close
-    connection.socket.on('close', () => {
+    socket.on('close', () => {
       clearInterval(heartbeatInterval);
     });
   });
@@ -114,7 +113,7 @@ export async function websocketRoutes(
 async function handleMessage(connectionId: string, message: BridgeClientMessage): Promise<void> {
   const connection = connections.get(connectionId);
   if (!connection) {
-    logger.error(`Connection not found: ${connectionId}`);
+    logger.info(`Connection not found: ${connectionId}`);
     return;
   }
   
@@ -223,7 +222,7 @@ async function handleMessage(connectionId: string, message: BridgeClientMessage)
       }
     }
   } catch (error) {
-    logger.error(`Error handling message type ${type}:`, error);
+    logger.error(error);
     connection.socket.send(JSON.stringify({
       type: 'error',
       error: { 
@@ -281,8 +280,8 @@ export function getConnection(connectionId: string): WebSocketConnection | undef
 
 export function broadcastToConnection(connectionId: string, message: unknown): void {
   const connection = connections.get(connectionId);
-  if (connection && connection.socket.socket.readyState === 1) { // WebSocket.OPEN
-    connection.socket.socket.send(JSON.stringify(message));
+  if (connection && connection.socket.readyState === 1) { // WebSocket.OPEN
+    connection.socket.send(JSON.stringify(message));
   }
 }
 
@@ -293,4 +292,4 @@ type BridgeClientMessage =
   | { type: 'acp:session:prompt'; payload: { sessionId: string; content: Array<{ type: string; text?: string }> } }
   | { type: 'acp:session:cancel'; payload: { sessionId: string } }
   | { type: 'acp:session:close'; payload: { sessionId: string } }
-  | { type: 'ping' };
+  | { type: 'ping'; payload?: never };

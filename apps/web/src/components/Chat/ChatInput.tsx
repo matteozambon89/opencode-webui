@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import { useState, useRef, type FC, type FormEvent, type KeyboardEvent, type ChangeEvent } from 'react';
 import { Send, Square, Paperclip } from 'lucide-react';
 
 interface ChatInputProps {
@@ -8,7 +8,7 @@ interface ChatInputProps {
   disabled?: boolean;
 }
 
-export const ChatInput: React.FC<ChatInputProps> = ({ 
+export const ChatInput: FC<ChatInputProps> = ({ 
   onSendMessage, 
   onCancel, 
   isStreaming,
@@ -17,7 +17,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [message, setMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (message.trim() && !isStreaming && !disabled) {
       onSendMessage(message.trim());
@@ -28,14 +28,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
     }
   };
 
-  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleInput = (e: ChangeEvent<HTMLTextAreaElement>) => {
     setMessage(e.target.value);
     // Auto-resize textarea
     if (textareaRef.current) {

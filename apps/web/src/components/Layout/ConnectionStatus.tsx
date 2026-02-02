@@ -1,7 +1,7 @@
-import React from 'react';
+import type { FC } from 'react';
 import { useWebSocket } from '../../context/WebSocketContext';
 
-export const ConnectionStatus: React.FC = () => {
+export const ConnectionStatus: FC = () => {
   const { connectionStatus } = useWebSocket();
 
   const statusConfig = {

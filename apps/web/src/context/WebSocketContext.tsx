@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import type { ConnectionStatus, BridgeMessage } from '@opencode/shared/types/websocket';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode, type FC } from 'react';
+import type { ConnectionStatus, BridgeMessage } from '@opencode/shared';
 
 interface WebSocketContextType {
   connectionStatus: ConnectionStatus;
@@ -11,11 +11,11 @@ interface WebSocketContextType {
 const WebSocketContext = createContext<WebSocketContextType | undefined>(undefined);
 
 interface WebSocketProviderProps {
-  children: React.ReactNode;
+  children: ReactNode;
   token: string;
 }
 
-export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children, token }) => {
+export const WebSocketProvider: FC<WebSocketProviderProps> = ({ children, token }) => {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
   const [lastMessage, setLastMessage] = useState<BridgeMessage | null>(null);
   const [connectionId, setConnectionId] = useState<string | null>(null);
@@ -45,8 +45,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children, 
         const message: BridgeMessage = JSON.parse(event.data);
         setLastMessage(message);
         
-        if (message.type === 'connection_status' && message.payload?.connectionId) {
-          setConnectionId(message.payload.connectionId as string);
+        if (message.type === 'connection_status' && message.payload && typeof message.payload === 'object' && 'connectionId' in message.payload) {
+          setConnectionId((message.payload as { connectionId: string }).connectionId);
         }
       } catch (error) {
         console.error('Failed to parse WebSocket message:', error);

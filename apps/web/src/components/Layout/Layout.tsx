@@ -1,13 +1,13 @@
-import React from 'react';
+import type { FC, ReactNode } from 'react';
 import { LogOut } from 'lucide-react';
-import { ConnectionStatus } from './Layout/ConnectionStatus';
+import { ConnectionStatus } from './ConnectionStatus';
 
 interface LayoutProps {
-  children: React.ReactNode;
+  children: ReactNode;
   onLogout: () => void;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, onLogout }) => {
+export const Layout: FC<LayoutProps> = ({ children, onLogout }) => {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-50">

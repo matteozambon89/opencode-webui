@@ -1,8 +1,8 @@
-import React from 'react';
+import type { FC, MouseEvent } from 'react';
 import { Plus, MessageSquare, X } from 'lucide-react';
 import { useACP } from '../../context/ACPContext';
 
-export const SessionSidebar: React.FC = () => {
+export const SessionSidebar: FC = () => {
   const { sessions, currentSessionId, createSession, closeSession, switchSession, isInitialized } = useACP();
 
   const handleNewSession = async () => {
@@ -13,7 +13,7 @@ export const SessionSidebar: React.FC = () => {
     await createSession();
   };
 
-  const handleCloseSession = (e: React.MouseEvent, sessionId: string) => {
+  const handleCloseSession = (e: MouseEvent, sessionId: string) => {
     e.stopPropagation();
     closeSession(sessionId);
   };

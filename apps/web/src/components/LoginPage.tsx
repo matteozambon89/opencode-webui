@@ -1,17 +1,17 @@
-import React, { useState } from 'react';
+import { useState, type FC, type FormEvent, type ChangeEvent } from 'react';
 import { LogIn, AlertCircle } from 'lucide-react';
 
 interface LoginPageProps {
   onLogin: (token: string) => void;
 }
 
-export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
+export const LoginPage: FC<LoginPageProps> = ({ onLogin }) => {
   const [username, setUsername] = useState('demo');
   const [password, setPassword] = useState('demo');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
@@ -61,7 +61,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
               id="username"
               type="text"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setUsername(e.target.value)}
               className="input"
               placeholder="Enter username"
               disabled={isLoading}
@@ -76,7 +76,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
               id="password"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
               className="input"
               placeholder="Enter password"
               disabled={isLoading}

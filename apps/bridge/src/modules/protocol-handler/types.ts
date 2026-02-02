@@ -3,15 +3,7 @@ import type {
   JSONRPCResponse,
   JSONRPCNotification,
   JSONRPCError,
-  InitializeParams,
-  InitializeResult,
-  SessionNewParams,
-  SessionNewResult,
-  SessionPromptParams,
-  SessionPromptResult,
-  SessionCancelParams,
-  SessionUpdateNotification,
-} from '@opencode/shared/types/acp';
+} from '@opencode/shared';
 
 export interface ACPMessageHandler {
   onRequest: (request: JSONRPCRequest) => Promise<JSONRPCResponse>;

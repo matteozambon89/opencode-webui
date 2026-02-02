@@ -1,9 +1,9 @@
-import React from 'react';
+import type { FC } from 'react';
 import { MessageList } from './MessageList';
 import { ChatInput } from './ChatInput';
 import { useACP } from '../../context/ACPContext';
 
-export const ChatContainer: React.FC = () => {
+export const ChatContainer: FC = () => {
   const { messages, streamingContent, isStreaming, sendPrompt, cancelPrompt, currentSessionId } = useACP();
 
   const handleSendMessage = async (content: string) => {

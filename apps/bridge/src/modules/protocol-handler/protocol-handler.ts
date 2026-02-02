@@ -6,7 +6,8 @@ import type {
   JSONRPCResponse,
   JSONRPCNotification,
   JSONRPCMessage,
-} from '@opencode/shared/types/acp';
+  InitializeResult,
+} from '@opencode/shared';
 import type { SessionInfo } from './types.js';
 
 // Pending requests waiting for response
@@ -87,13 +88,14 @@ export class ACPProtocolHandler {
 
       logger.info(`ACP session ${sessionId} initialized successfully`);
 
+      const result = response.result as InitializeResult;
       return {
         success: true,
-        protocolVersion: response.result?.protocolVersion,
-        agentCapabilities: response.result?.agentCapabilities,
+        protocolVersion: result?.protocolVersion,
+        agentCapabilities: result?.agentCapabilities,
       };
     } catch (error) {
-      logger.error(`Failed to initialize ACP session:`, error);
+      logger.error(error);
       
       // Clean up
       await this.closeSession(sessionId);
@@ -112,7 +114,7 @@ export class ACPProtocolHandler {
   ): Promise<{ success: boolean; sessionId?: string; error?: string }> {
     const sessionId = uuidv4();
     
-    logger.info(`Creating ACP session ${sessionId}`, { cwd: params?.cwd });
+    logger.info({ cwd: params?.cwd }, `Creating ACP session ${sessionId}`);
 
     try {
       // Spawn OpenCode process
@@ -160,7 +162,7 @@ export class ACPProtocolHandler {
         sessionId,
       };
     } catch (error) {
-      logger.error(`Failed to create ACP session:`, error);
+      logger.error(error);
       await this.closeSession(sessionId);
       
       return {
@@ -199,7 +201,7 @@ export class ACPProtocolHandler {
       processManager.sendMessage(sessionId, request);
       return { success: true };
     } catch (error) {
-      logger.error(`Failed to send prompt:`, error);
+      logger.error(error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to send prompt',
@@ -222,7 +224,7 @@ export class ACPProtocolHandler {
     try {
       processManager.sendMessage(sessionId, notification);
     } catch (error) {
-      logger.error(`Failed to cancel session:`, error);
+      logger.error(error);
     }
   }
 
@@ -323,7 +325,7 @@ export class ACPProtocolHandler {
   }
 
   private handleProcessError(sessionId: string, error: Error): void {
-    logger.error(`Process error for session ${sessionId}:`, error);
+    logger.error(error);
     
     // Reject all pending requests for this session
     for (const [id, pending] of this.pendingRequests.entries()) {
@@ -347,12 +349,12 @@ export class ACPProtocolHandler {
     this.closeSession(sessionId);
   }
 
-  private getSessionIdFromRequestId(requestId: string): string | undefined {
+  private getSessionIdFromRequestId(_requestId: string): string | undefined {
     // Find session by checking pending requests
     // This is a simplification - in production, track request -> session mapping
     for (const [sessionId, session] of this.sessions.entries()) {
       // Check if this session has pending requests
-      for (const id of this.pendingRequests.keys()) {
+      for (const _id of this.pendingRequests.keys()) {
         // We need to track which session a request belongs to
         // For now, return the first active session
         if (session.status === 'active') {

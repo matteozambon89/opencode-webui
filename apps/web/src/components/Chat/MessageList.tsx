@@ -1,6 +1,6 @@
-import React, { useRef, useEffect } from 'react';
+import { useRef, useEffect, type FC } from 'react';
 import { User, Bot } from 'lucide-react';
-import type { ChatMessage } from '@opencode/shared/types/websocket';
+import type { ChatMessage } from '@opencode/shared';
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -8,7 +8,7 @@ interface MessageListProps {
   isStreaming: boolean;
 }
 
-export const MessageList: React.FC<MessageListProps> = ({ 
+export const MessageList: FC<MessageListProps> = ({ 
   messages, 
   streamingContent, 
   isStreaming 

@@ -15,12 +15,11 @@ RUN pnpm --filter @opencode/shared build
 RUN pnpm --filter @opencode/bridge build
 
 FROM node:22-alpine AS production
-RUN addgroup -g 1001 -S nodejs && adduser -S node -u 1001
 WORKDIR /app
 COPY --from=builder /app/apps/bridge/dist ./dist
 COPY --from=builder /app/apps/bridge/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
-USER node
+USER 1000
 EXPOSE 3001
 ENV NODE_ENV=production
 ENV PORT=3001

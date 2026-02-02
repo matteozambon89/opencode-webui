@@ -1,6 +1,29 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode, type FC } from 'react';
 import { useWebSocket } from './WebSocketContext';
-import type { ChatMessage, Session } from '@opencode/shared/types/websocket';
+import type { ChatMessage, Session } from '@opencode/shared';
+
+// Extended ACP message types that extend the base BridgeMessage
+type ACPMessageType = 
+  | 'acp:initialized'
+  | 'acp:session:created'
+  | 'acp:session:update'
+  | 'acp:session:completed'
+  | 'acp:error'
+  | 'acp:initialize'
+  | 'acp:session:new'
+  | 'acp:session:prompt'
+  | 'acp:session:cancel'
+  | 'acp:session:close';
+
+interface ACPMessage {
+  type: ACPMessageType;
+  id?: string;
+  payload?: unknown;
+  error?: {
+    code: string;
+    message: string;
+  };
+}
 
 interface ACPContextType {
   sessions: Session[];
@@ -19,10 +42,10 @@ interface ACPContextType {
 const ACPContext = createContext<ACPContextType | undefined>(undefined);
 
 interface ACPProviderProps {
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
-export const ACPProvider: React.FC<ACPProviderProps> = ({ children }) => {
+export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
   const { sendMessage, lastMessage, connectionStatus, connectionId } = useWebSocket();
   
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -36,14 +59,16 @@ export const ACPProvider: React.FC<ACPProviderProps> = ({ children }) => {
   useEffect(() => {
     if (!lastMessage) return;
 
-    switch (lastMessage.type) {
+    const message = lastMessage as unknown as ACPMessage;
+
+    switch (message.type) {
       case 'acp:initialized': {
         setIsInitialized(true);
         break;
       }
 
       case 'acp:session:created': {
-        const { sessionId } = lastMessage.payload as { sessionId: string };
+        const { sessionId } = message.payload as { sessionId: string };
         const newSession: Session = {
           id: sessionId,
           name: `Session ${sessions.length + 1}`,
@@ -58,7 +83,7 @@ export const ACPProvider: React.FC<ACPProviderProps> = ({ children }) => {
       }
 
       case 'acp:session:update': {
-        const { update } = lastMessage.payload as { update: { kind: string; content: unknown } };
+        const { update } = message.payload as { update: { kind: string; content: unknown } };
         
         if (update.kind === 'agent_message_chunk') {
           const content = (update.content as { content: Array<{ type: string; text?: string }> }).content;
@@ -72,7 +97,7 @@ export const ACPProvider: React.FC<ACPProviderProps> = ({ children }) => {
       }
 
       case 'acp:session:completed': {
-        const { result } = lastMessage.payload as { 
+        const { result } = message.payload as { 
           result: { 
             content: Array<{ type: string; text?: string }>; 
             stopReason: string;
@@ -107,7 +132,7 @@ export const ACPProvider: React.FC<ACPProviderProps> = ({ children }) => {
       }
 
       case 'acp:error': {
-        console.error('ACP error:', lastMessage.error);
+        console.error('ACP error:', message.error);
         setIsStreaming(false);
         break;
       }
@@ -118,7 +143,7 @@ export const ACPProvider: React.FC<ACPProviderProps> = ({ children }) => {
   useEffect(() => {
     if (connectionStatus === 'connected' && connectionId && !isInitialized) {
       sendMessage({
-        type: 'acp:initialize',
+        type: 'acp:initialize' as const,
         payload: {
           protocolVersion: 1,
           clientInfo: {
@@ -139,7 +164,7 @@ export const ACPProvider: React.FC<ACPProviderProps> = ({ children }) => {
             },
           },
         },
-      });
+      } as unknown as Parameters<typeof sendMessage>[0]);
     }
   }, [connectionStatus, connectionId, isInitialized, sendMessage]);
 
@@ -150,9 +175,9 @@ export const ACPProvider: React.FC<ACPProviderProps> = ({ children }) => {
     }
 
     sendMessage({
-      type: 'acp:session:new',
+      type: 'acp:session:new' as const,
       payload: cwd ? { cwd } : undefined,
-    });
+    } as unknown as Parameters<typeof sendMessage>[0]);
 
     // Return null here - the session ID will come via acp:session:created
     return null;
@@ -177,30 +202,30 @@ export const ACPProvider: React.FC<ACPProviderProps> = ({ children }) => {
 
     // Send to ACP
     sendMessage({
-      type: 'acp:session:prompt',
+      type: 'acp:session:prompt' as const,
       payload: {
         sessionId: currentSessionId,
         content: [{ type: 'text', text: content }],
       },
-    });
+    } as unknown as Parameters<typeof sendMessage>[0]);
   }, [currentSessionId, isInitialized, sendMessage]);
 
   const cancelPrompt = useCallback(() => {
     if (!currentSessionId) return;
     
     sendMessage({
-      type: 'acp:session:cancel',
+      type: 'acp:session:cancel' as const,
       payload: { sessionId: currentSessionId },
-    });
+    } as unknown as Parameters<typeof sendMessage>[0]);
     
     setIsStreaming(false);
   }, [currentSessionId, sendMessage]);
 
   const closeSession = useCallback((sessionId: string) => {
     sendMessage({
-      type: 'acp:session:close',
+      type: 'acp:session:close' as const,
       payload: { sessionId },
-    });
+    } as unknown as Parameters<typeof sendMessage>[0]);
 
     setSessions((prev) => prev.filter((s) => s.id !== sessionId));
     
