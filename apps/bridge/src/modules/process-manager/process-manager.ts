@@ -8,7 +8,7 @@ export class OpenCodeProcessManager {
   private processes = new Map<string, OpenCodeProcess>();
   private handlers = new Map<string, ProcessMessageHandler>();
 
-  async spawnProcess(sessionId: string, cwd?: string): Promise<OpenCodeProcess> {
+  async spawnProcess(sessionId: string, cwd?: string, model?: string): Promise<OpenCodeProcess> {
     // Check if process already exists
     const existing = this.processes.get(sessionId);
     if (existing && existing.status !== 'closed') {
@@ -16,14 +16,17 @@ export class OpenCodeProcessManager {
       return existing;
     }
 
-    logger.info({ cwd }, `Spawning opencode acp process for session ${sessionId}`);
+    logger.info({ cwd, model }, `Spawning opencode acp process for session ${sessionId}`);
 
     // Detect opencode command
     const opencodeCommand = await this.detectOpenCodeCommand();
-    
+
     const args = ['acp'];
     if (cwd) {
       args.push('--cwd', cwd);
+    }
+    if (model) {
+      args.push('--model', model);
     }
 
     const childProcess = spawn(opencodeCommand, args, {
@@ -40,6 +43,7 @@ export class OpenCodeProcessManager {
       process: childProcess,
       status: 'initializing',
       cwd,
+      model,
     };
 
     this.processes.set(sessionId, processInfo);

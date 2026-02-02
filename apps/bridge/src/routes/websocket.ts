@@ -74,8 +74,13 @@ export async function websocketRoutes(
       }
     });
     
-    // Handle ping/pong for connection health
-    socket.on('ping', () => {
+    // Handle incoming pong responses from client
+    socket.on('pong', () => {
+      wsConnection.isAlive = true;
+    });
+    
+    // Mark as alive when any message is received (application-level activity)
+    socket.on('message', () => {
       wsConnection.isAlive = true;
     });
     
@@ -90,18 +95,24 @@ export async function websocketRoutes(
       });
     });
     
-    // Set up heartbeat check
+    // Set up heartbeat check (every 25 seconds)
     const heartbeatInterval = setInterval(() => {
       if (!wsConnection.isAlive) {
-        logger.warn(`Connection ${connectionId} timed out`);
+        logger.warn(`Connection ${connectionId} timed out - no activity detected`);
         socket.terminate();
         clearInterval(heartbeatInterval);
         return;
       }
       
+      // Reset isAlive and send ping to client
       wsConnection.isAlive = false;
-      socket.ping();
-    }, 30000);
+      try {
+        socket.ping();
+        logger.debug(`Sent ping to connection ${connectionId}`);
+      } catch (err) {
+        logger.error(`Failed to send ping to ${connectionId}`);
+      }
+    }, 25000);
     
     // Clean up interval on close
     socket.on('close', () => {
@@ -133,7 +144,8 @@ async function handleMessage(connectionId: string, message: BridgeClientMessage)
             type: 'acp:initialized',
             payload: {
               protocolVersion: result.protocolVersion,
-              agentCapabilities: result.agentCapabilities
+              agentCapabilities: result.agentCapabilities,
+              availableModels: result.availableModels
             }
           }));
         } else {
@@ -151,18 +163,22 @@ async function handleMessage(connectionId: string, message: BridgeClientMessage)
           connection.userId,
           payload
         );
-        
+
         if (result.success && result.sessionId) {
           connection.sessionIds.add(result.sessionId);
-          
+
           // Register notification handler for this session
           acpHandler.onNotification(result.sessionId, (notification) => {
             handleSessionNotification(connectionId, result.sessionId!, notification);
           });
-          
+
           connection.socket.send(JSON.stringify({
             type: 'acp:session:created',
-            payload: { sessionId: result.sessionId }
+            payload: {
+              sessionId: result.sessionId,
+              availableModels: result.availableModels,
+              currentModel: result.currentModel
+            }
           }));
         } else {
           connection.socket.send(JSON.stringify({
@@ -174,8 +190,8 @@ async function handleMessage(connectionId: string, message: BridgeClientMessage)
       }
       
       case 'acp:session:prompt': {
-        const { sessionId, content } = payload;
-        const result = await acpHandler.sendPrompt(sessionId, content);
+        const { sessionId, content, agentMode } = payload as { sessionId: string; content: Array<{ type: string; text?: string }>; agentMode?: 'plan' | 'build' };
+        const result = await acpHandler.sendPrompt(sessionId, content, agentMode);
         
         if (!result.success) {
           connection.socket.send(JSON.stringify({
@@ -209,7 +225,10 @@ async function handleMessage(connectionId: string, message: BridgeClientMessage)
       }
       
       case 'ping': {
+        // Mark connection as alive when receiving application-level ping
+        connection.isAlive = true;
         connection.socket.send(JSON.stringify({ type: 'pong' }));
+        logger.debug(`Received ping from connection ${connectionId}`);
         break;
       }
       

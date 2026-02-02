@@ -1,5 +1,5 @@
 import { useRef, useEffect, type FC } from 'react';
-import { User, Bot } from 'lucide-react';
+import { User, Bot, Lightbulb, Wrench } from 'lucide-react';
 import type { ChatMessage } from '@opencode/shared';
 
 interface MessageListProps {
@@ -54,6 +54,22 @@ export const MessageList: FC<MessageListProps> = ({
                 : 'bg-gray-100 text-gray-900'
             }`}
           >
+            {/* Agent Mode Badge for User Messages */}
+            {message.role === 'user' && message.agentMode && (
+              <div className="flex items-center gap-1 mb-1 opacity-90">
+                {message.agentMode === 'plan' ? (
+                  <>
+                    <Lightbulb className="w-3 h-3" />
+                    <span className="text-xs font-medium">Plan Mode</span>
+                  </>
+                ) : (
+                  <>
+                    <Wrench className="w-3 h-3" />
+                    <span className="text-xs font-medium">Build Mode</span>
+                  </>
+                )}
+              </div>
+            )}
             <p className="whitespace-pre-wrap">{message.content}</p>
             <span className="text-xs opacity-70 mt-1 block">
               {message.timestamp.toLocaleTimeString()}

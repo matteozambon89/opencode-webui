@@ -30,6 +30,7 @@ export interface Session {
   messageCount: number;
   status: 'active' | 'closed';
   cwd?: string;
+  model?: string;
 }
 
 // Chat Message
@@ -40,6 +41,7 @@ export interface ChatMessage {
   timestamp: Date;
   isStreaming?: boolean;
   toolCalls?: ToolCallDisplay[];
+  agentMode?: 'plan' | 'build';
 }
 
 export interface ToolCallDisplay {

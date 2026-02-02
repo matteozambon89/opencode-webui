@@ -1,6 +1,6 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode, type FC } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode, type FC } from 'react';
 import { useWebSocket } from './WebSocketContext';
-import type { ChatMessage, Session } from '@opencode/shared';
+import type { ChatMessage, Session, AgentMode } from '@opencode/shared';
 
 // Extended ACP message types that extend the base BridgeMessage
 type ACPMessageType = 
@@ -31,12 +31,21 @@ interface ACPContextType {
   messages: ChatMessage[];
   streamingContent: string;
   isStreaming: boolean;
-  createSession: (cwd?: string) => Promise<string | null>;
+  createSession: (cwd?: string, model?: string) => Promise<string | null>;
   sendPrompt: (content: string) => Promise<void>;
   cancelPrompt: () => void;
   closeSession: (sessionId: string) => void;
   switchSession: (sessionId: string) => void;
   isInitialized: boolean;
+  // Agent mode
+  agentMode: AgentMode;
+  setAgentMode: (mode: AgentMode) => void;
+  // Model selection
+  availableModels: string[];
+  selectedModel: string | null;
+  setSelectedModel: (model: string | null) => void;
+  // Validation
+  canSendMessage: boolean;
 }
 
 const ACPContext = createContext<ACPContextType | undefined>(undefined);
@@ -47,7 +56,7 @@ interface ACPProviderProps {
 
 export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
   const { sendMessage, lastMessage, connectionStatus, connectionId } = useWebSocket();
-  
+
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -55,29 +64,70 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
 
+  // Agent mode state
+  const [agentMode, setAgentMode] = useState<AgentMode>('build');
+
+  // Model selection state
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+
+  // Track processed message IDs to prevent duplicate processing
+  const processedMessageIds = useRef<Set<string>>(new Set());
+
   // Handle incoming messages
   useEffect(() => {
     if (!lastMessage) return;
+
+    // Skip if this message has already been processed
+    if (lastMessage.id && processedMessageIds.current.has(lastMessage.id)) {
+      return;
+    }
+
+    // Mark message as processed
+    if (lastMessage.id) {
+      processedMessageIds.current.add(lastMessage.id);
+    }
 
     const message = lastMessage as unknown as ACPMessage;
 
     switch (message.type) {
       case 'acp:initialized': {
         setIsInitialized(true);
+        // Note: Models are now extracted from acp:session:created, not acp:initialized
         break;
       }
 
       case 'acp:session:created': {
-        const { sessionId } = message.payload as { sessionId: string };
-        const newSession: Session = {
-          id: sessionId,
-          name: `Session ${sessions.length + 1}`,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          messageCount: 0,
-          status: 'active',
+        const { sessionId, availableModels: models, currentModel } = message.payload as {
+          sessionId: string;
+          availableModels?: string[];
+          currentModel?: string;
         };
-        setSessions((prev) => [...prev, newSession]);
+
+        // Update available models
+        if (models && models.length > 0) {
+          setAvailableModels(models);
+          // Auto-select current model or first available if none selected
+          if (!selectedModel) {
+            setSelectedModel(currentModel || models[0]);
+          }
+        }
+
+        setSessions((prev) => {
+          // Check if session already exists to prevent duplicates
+          if (prev.some(s => s.id === sessionId)) {
+            return prev;
+          }
+          const newSession: Session = {
+            id: sessionId,
+            name: `Session ${prev.length + 1}`,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            messageCount: 0,
+            status: 'active',
+          };
+          return [...prev, newSession];
+        });
         setCurrentSessionId(sessionId);
         break;
       }
@@ -97,32 +147,47 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
       }
 
       case 'acp:session:completed': {
-        const { result } = message.payload as { 
+        const { result, sessionId: completedSessionId } = message.payload as { 
           result: { 
             content: Array<{ type: string; text?: string }>; 
             stopReason: string;
-          } 
+          };
+          sessionId: string;
         };
         
         const finalText = result.content.map(c => c.text || '').join('');
         
-        const assistantMessage: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: streamingContent + finalText,
-          timestamp: new Date(),
-          isStreaming: false,
-        };
+        // Use functional updates to access current state
+        setMessages((prevMessages) => {
+          // Find if we already have a streaming message for this session
+          const streamingMsg = prevMessages.find(m => m.isStreaming && m.role === 'assistant');
+          if (streamingMsg) {
+            // Update existing streaming message
+            return prevMessages.map(m => 
+              m.id === streamingMsg.id 
+                ? { ...m, content: m.content + finalText, isStreaming: false }
+                : m
+            );
+          }
+          // Add new assistant message
+          const assistantMessage: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: finalText,
+            timestamp: new Date(),
+            isStreaming: false,
+          };
+          return [...prevMessages, assistantMessage];
+        });
         
-        setMessages((prev) => [...prev, assistantMessage]);
         setStreamingContent('');
         setIsStreaming(false);
         
         // Update session message count
-        if (currentSessionId) {
+        if (completedSessionId) {
           setSessions((prev) =>
             prev.map((s) =>
-              s.id === currentSessionId
+              s.id === completedSessionId
                 ? { ...s, messageCount: s.messageCount + 2, updatedAt: new Date() }
                 : s
             )
@@ -137,7 +202,7 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
         break;
       }
     }
-  }, [lastMessage, streamingContent, currentSessionId, sessions.length]);
+  }, [lastMessage]);
 
   // Initialize ACP when connected
   useEffect(() => {
@@ -168,15 +233,19 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
     }
   }, [connectionStatus, connectionId, isInitialized, sendMessage]);
 
-  const createSession = useCallback(async (cwd?: string): Promise<string | null> => {
+  const createSession = useCallback(async (cwd?: string, model?: string): Promise<string | null> => {
     if (!isInitialized) {
       console.error('ACP not initialized');
       return null;
     }
 
+    const payload: { cwd?: string; model?: string } = {};
+    if (cwd) payload.cwd = cwd;
+    if (model) payload.model = model;
+
     sendMessage({
       type: 'acp:session:new' as const,
-      payload: cwd ? { cwd } : undefined,
+      payload: Object.keys(payload).length > 0 ? payload : undefined,
     } as unknown as Parameters<typeof sendMessage>[0]);
 
     // Return null here - the session ID will come via acp:session:created
@@ -189,26 +258,28 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
       return;
     }
 
-    // Add user message
+    // Add user message with agent mode
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
       content,
       timestamp: new Date(),
+      agentMode,
     };
     setMessages((prev) => [...prev, userMessage]);
     setIsStreaming(true);
     setStreamingContent('');
 
-    // Send to ACP
+    // Send to ACP with agent mode
     sendMessage({
       type: 'acp:session:prompt' as const,
       payload: {
         sessionId: currentSessionId,
         content: [{ type: 'text', text: content }],
+        agentMode,
       },
     } as unknown as Parameters<typeof sendMessage>[0]);
-  }, [currentSessionId, isInitialized, sendMessage]);
+  }, [currentSessionId, isInitialized, sendMessage, agentMode]);
 
   const cancelPrompt = useCallback(() => {
     if (!currentSessionId) return;
@@ -241,6 +312,9 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
     setMessages([]);
   }, []);
 
+  // Computed property: can send message when initialized, has session, and agent mode is set
+  const canSendMessage = isInitialized && !!currentSessionId && !!agentMode;
+
   const value: ACPContextType = {
     sessions,
     currentSessionId,
@@ -253,6 +327,15 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
     closeSession,
     switchSession,
     isInitialized,
+    // Agent mode
+    agentMode,
+    setAgentMode,
+    // Model selection
+    availableModels,
+    selectedModel,
+    setSelectedModel,
+    // Validation
+    canSendMessage,
   };
 
   return <ACPContext.Provider value={value}>{children}</ACPContext.Provider>;

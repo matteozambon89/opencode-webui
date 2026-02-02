@@ -7,6 +7,7 @@ import type {
   JSONRPCNotification,
   JSONRPCMessage,
   InitializeResult,
+  SessionNewResult,
 } from '@opencode/shared';
 import type { SessionInfo } from './types.js';
 
@@ -35,6 +36,7 @@ export class ACPProtocolHandler {
     success: boolean;
     protocolVersion?: number;
     agentCapabilities?: unknown;
+    availableModels?: string[];
     error?: string;
   }> {
     // For now, we'll create a session directly since OpenCode ACP doesn't require authentication
@@ -93,6 +95,7 @@ export class ACPProtocolHandler {
         success: true,
         protocolVersion: result?.protocolVersion,
         agentCapabilities: result?.agentCapabilities,
+        availableModels: result?.availableModels,
       };
     } catch (error) {
       logger.error(error);
@@ -110,11 +113,11 @@ export class ACPProtocolHandler {
   async createSession(
     connectionId: string,
     userId: string,
-    params?: { cwd?: string }
-  ): Promise<{ success: boolean; sessionId?: string; error?: string }> {
+    params?: { cwd?: string; model?: string }
+  ): Promise<{ success: boolean; sessionId?: string; availableModels?: string[]; currentModel?: string; error?: string }> {
     const sessionId = uuidv4();
-    
-    logger.info({ cwd: params?.cwd }, `Creating ACP session ${sessionId}`);
+
+    logger.info({ cwd: params?.cwd, model: params?.model }, `Creating ACP session ${sessionId}`);
 
     try {
       // Spawn OpenCode process
@@ -133,38 +136,81 @@ export class ACPProtocolHandler {
         connectionId,
         userId,
         cwd: params?.cwd,
+        model: params?.model,
         isInitialized: false,
         status: 'active',
       };
       this.sessions.set(sessionId, session);
 
-      // Send session/new request
-      const request: JSONRPCRequest = {
+      // Step 1: Send initialize request
+      const initRequest: JSONRPCRequest = {
+        jsonrpc: '2.0',
+        id: crypto.randomUUID(),
+        method: 'initialize',
+        params: {
+          protocolVersion: 1,
+          clientInfo: { name: 'opencode-bridge', version: '1.0.0' },
+          capabilities: {},
+        },
+      };
+
+      const initResponse = await this.sendRequestAndWait(sessionId, initRequest);
+
+      if (initResponse.error) {
+        throw new Error(`Initialize failed: ${initResponse.error.message}`);
+      }
+
+      // Step 2: Send session/new request with required parameters
+      const sessionNewRequest: JSONRPCRequest = {
         jsonrpc: '2.0',
         id: crypto.randomUUID(),
         method: 'session/new',
         params: {
-          cwd: params?.cwd,
+          cwd: params?.cwd || process.cwd(),
+          mcpServers: [],
+          ...(params?.model ? { model: params.model } : {}),
         },
       };
 
-      const response = await this.sendRequestAndWait(sessionId, request);
+      const sessionResponse = await this.sendRequestAndWait(sessionId, sessionNewRequest);
 
-      if (response.error) {
-        throw new Error(response.error.message);
+      if (sessionResponse.error) {
+        throw new Error(`Session creation failed: ${sessionResponse.error.message}`);
+      }
+
+      const sessionResult = sessionResponse.result as SessionNewResult;
+      
+      // Update session with OpenCode's session ID if different
+      if (sessionResult.sessionId && sessionResult.sessionId !== sessionId) {
+        session.sessionId = sessionResult.sessionId;
+        // Update the sessions map with the correct ID
+        this.sessions.delete(sessionId);
+        this.sessions.set(sessionResult.sessionId, session);
       }
 
       session.isInitialized = true;
       processManager.updateStatus(sessionId, 'ready');
 
+      // Extract available models from the response
+      const availableModels = sessionResult.models?.availableModels?.map(m => m.modelId) || [];
+      const currentModel = sessionResult.models?.currentModelId;
+
+      logger.info({ 
+        sessionId: sessionResult.sessionId || sessionId, 
+        modelCount: availableModels.length,
+        currentModel 
+      }, `ACP session created successfully`);
+
       return {
         success: true,
-        sessionId,
+        sessionId: sessionResult.sessionId || sessionId,
+        availableModels,
+        currentModel,
       };
     } catch (error) {
       logger.error(error);
       await this.closeSession(sessionId);
-      
+
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -174,7 +220,8 @@ export class ACPProtocolHandler {
 
   async sendPrompt(
     sessionId: string,
-    content: Array<{ type: string; text?: string }>
+    content: Array<{ type: string; text?: string }>,
+    agentMode?: 'plan' | 'build'
   ): Promise<{ success: boolean; error?: string }> {
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -192,6 +239,7 @@ export class ACPProtocolHandler {
       params: {
         sessionId,
         content,
+        ...(agentMode ? { agentMode } : {}),
       },
     };
 

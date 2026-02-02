@@ -5,6 +5,7 @@ export interface OpenCodeProcess {
   process: import('child_process').ChildProcess;
   status: 'initializing' | 'ready' | 'error' | 'closed';
   cwd?: string;
+  model?: string;
 }
 
 export interface ProcessMessageHandler {

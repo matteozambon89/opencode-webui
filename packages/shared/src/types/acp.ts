@@ -67,6 +67,16 @@ export interface AgentCapabilities {
   };
 }
 
+// Agent Mode
+export type AgentMode = 'plan' | 'build';
+
+// Model Info
+export interface ModelInfo {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 // Initialize
 export interface InitializeParams {
   protocolVersion: number;
@@ -86,16 +96,33 @@ export interface InitializeResult {
     version: string;
   };
   authenticationMethods?: string[];
+  availableModels?: string[];
 }
 
 // Session Management
 export interface SessionNewParams {
   cwd?: string;
   mcpServers?: MCPServerConfig[];
+  model?: string;
 }
 
 export interface SessionNewResult {
   sessionId: string;
+  models?: {
+    currentModelId: string;
+    availableModels: Array<{
+      modelId: string;
+      name: string;
+    }>;
+  };
+  modes?: {
+    currentModeId: string;
+    availableModes: Array<{
+      id: string;
+      name: string;
+      description: string;
+    }>;
+  };
 }
 
 export interface MCPServerConfig {
@@ -153,6 +180,7 @@ export type ContentBlock =
 export interface SessionPromptParams {
   sessionId: string;
   content: ContentBlock[];
+  agentMode?: AgentMode;
 }
 
 export interface SessionPromptResult {

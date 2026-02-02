@@ -1,16 +1,16 @@
 import type { FC, MouseEvent } from 'react';
-import { Plus, MessageSquare, X } from 'lucide-react';
+import { Plus, MessageSquare, X, Cpu } from 'lucide-react';
 import { useACP } from '../../context/ACPContext';
 
 export const SessionSidebar: FC = () => {
-  const { sessions, currentSessionId, createSession, closeSession, switchSession, isInitialized } = useACP();
+  const { sessions, currentSessionId, createSession, closeSession, switchSession, isInitialized, availableModels, selectedModel, setSelectedModel } = useACP();
 
   const handleNewSession = async () => {
     if (!isInitialized) {
       alert('Not connected to ACP server');
       return;
     }
-    await createSession();
+    await createSession(undefined, selectedModel || undefined);
   };
 
   const handleCloseSession = (e: MouseEvent, sessionId: string) => {
@@ -20,7 +20,35 @@ export const SessionSidebar: FC = () => {
 
   return (
     <div className="card h-full flex flex-col">
-      <div className="p-4 border-b border-gray-200">
+      <div className="p-4 border-b border-gray-200 space-y-3">
+        {/* Model Selector */}
+        {availableModels.length > 0 ? (
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-gray-500 flex items-center gap-1">
+              <Cpu className="w-3 h-3" />
+              Model
+            </label>
+            <select
+              value={selectedModel || ''}
+              onChange={(e) => setSelectedModel(e.target.value || null)}
+              disabled={!isInitialized}
+              className="w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:opacity-50"
+            >
+              <option value="">Select a model...</option>
+              {availableModels.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div className="text-xs text-gray-500 bg-gray-50 rounded-md px-3 py-2">
+            <p className="font-medium mb-1">Using default model</p>
+            <p>OpenCode will use the configured default model.</p>
+          </div>
+        )}
+
         <button
           onClick={handleNewSession}
           disabled={!isInitialized}

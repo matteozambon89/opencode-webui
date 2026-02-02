@@ -16,6 +16,7 @@ export interface SessionInfo {
   connectionId: string;
   userId: string;
   cwd?: string;
+  model?: string;
   isInitialized: boolean;
   status: 'active' | 'closed';
 }
