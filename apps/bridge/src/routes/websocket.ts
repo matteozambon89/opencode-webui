@@ -98,25 +98,7 @@ export async function websocketRoutes(
     socket.on('message', () => {
       wsConnection.isAlive = true;
     });
-    
-    // Handle close
-    socket.on('close', () => {
-      logger.info(`WebSocket disconnected: ${connectionId}`);
-      connections.delete(connectionId);
-      
-      // Clean up associated sessions
-      wsConnection.sessionIds.forEach(sessionId => {
-        acpHandler.closeSession(sessionId);
-      });
-      
-      // Clean up pending requests for this connection
-      for (const [requestId, request] of pendingRequests.entries()) {
-        if (request.connectionId === connectionId) {
-          pendingRequests.delete(requestId);
-        }
-      }
-    });
-    
+
     // Set up heartbeat check (every 25 seconds)
     const heartbeatInterval = setInterval(() => {
       if (!wsConnection.isAlive) {
@@ -125,7 +107,7 @@ export async function websocketRoutes(
         clearInterval(heartbeatInterval);
         return;
       }
-      
+
       // Reset isAlive and send ping to client
       wsConnection.isAlive = false;
       try {
@@ -135,10 +117,28 @@ export async function websocketRoutes(
         logger.error(`Failed to send ping to ${connectionId}`);
       }
     }, 25000);
-    
-    // Clean up interval on close
+
+    // Handle close - consolidated cleanup
     socket.on('close', () => {
+      logger.info(`WebSocket disconnected: ${connectionId}`);
+
+      // Clear heartbeat interval
       clearInterval(heartbeatInterval);
+
+      // Remove connection
+      connections.delete(connectionId);
+
+      // Clean up associated sessions
+      wsConnection.sessionIds.forEach(sessionId => {
+        acpHandler.closeSession(sessionId);
+      });
+
+      // Clean up pending requests for this connection
+      for (const [requestId, request] of pendingRequests.entries()) {
+        if (request.connectionId === connectionId) {
+          pendingRequests.delete(requestId);
+        }
+      }
     });
   });
 }
@@ -296,7 +296,26 @@ async function handleMessage(connectionId: string, message: { id?: string; type?
         const typedPayload = payload as { sessionId: string; content: Array<{ type: string; text?: string }>; agentMode?: 'plan' | 'build' };
         const { sessionId, content, agentMode } = typedPayload;
         logger.info(`[WebSocket] Prompt details: sessionId=${sessionId}, agentMode=${agentMode}, contentBlocks=${content.length}`);
-        
+
+        // Validate session ownership
+        const session = acpHandler.getSession(sessionId);
+        if (!session) {
+          connection.socket.send(JSON.stringify(createErrorMessage(
+            type as MessageType,
+            'SESSION_NOT_FOUND',
+            'Session not found'
+          )));
+          return;
+        }
+        if (session.connectionId !== connectionId) {
+          connection.socket.send(JSON.stringify(createErrorMessage(
+            type as MessageType,
+            'UNAUTHORIZED',
+            'Session does not belong to this connection'
+          )));
+          return;
+        }
+
         // Track this request for correlation
         const requestId = messageId || uuidv4();
         pendingRequests.set(requestId, {
@@ -304,9 +323,9 @@ async function handleMessage(connectionId: string, message: { id?: string; type?
           requestType: type,
           startTime: Date.now()
         });
-        
+
         const result = await acpHandler.sendPrompt(sessionId, content, agentMode);
-        
+
         if (!result.success) {
           logger.error(`[WebSocket] Failed to send prompt: ${result.error}`);
           pendingRequests.delete(requestId);
@@ -317,6 +336,8 @@ async function handleMessage(connectionId: string, message: { id?: string; type?
           )));
         } else {
           logger.info(`[WebSocket] Prompt sent successfully to OpenCode`);
+          // Clean up pending request on success - responses come via notifications
+          pendingRequests.delete(requestId);
           // Send acceptance confirmation
           connection.socket.send(JSON.stringify(createMessage('acp:prompt:send:success', {
             requestId,
@@ -434,7 +455,9 @@ function handleSessionNotification(
   // Forward session/update notifications to the client using new protocol
   if (notification.method === 'session/update') {
     logger.info(`Forwarding session/update as acp:prompt:update to frontend [${sessionId}]`);
-    const params = notification.params as { update?: unknown };
+    const params = typeof notification.params === 'object' && notification.params !== null
+      ? notification.params as { update?: unknown }
+      : { update: undefined };
     connection.socket.send(JSON.stringify(createMessage('acp:prompt:update', {
       sessionId,
       requestId: correlatedRequestId || 'unknown',
@@ -443,48 +466,66 @@ function handleSessionNotification(
   } else if (notification.method === 'session/error') {
     // Forward error notifications from stderr using new protocol
     logger.info(`Forwarding session/error as acp:session:error to frontend [${sessionId}]`);
-    const errorParams = notification.params as { error: { code: string; message: string; details?: string } };
+    const params = typeof notification.params === 'object' && notification.params !== null
+      ? notification.params as Record<string, unknown>
+      : {};
+    const errorParams = typeof params.error === 'object' && params.error !== null
+      ? params.error as { code: string; message: string; details?: string }
+      : { code: 'UNKNOWN_ERROR', message: 'An unknown error occurred' };
     connection.socket.send(JSON.stringify({
       ...createMessage('acp:session:error', { sessionId }),
-      error: errorParams.error
+      error: errorParams
     }));
   } else if (notification.method === 'session/prompt') {
     // This is the final response to a prompt
     logger.info(`Forwarding session/prompt as acp:prompt:complete to frontend [${sessionId}]`);
-    const promptParams = notification.params as { content?: unknown; stopReason?: string };
-    
+    const params = typeof notification.params === 'object' && notification.params !== null
+      ? notification.params as Record<string, unknown>
+      : {};
+    const promptParams = {
+      content: params.content,
+      stopReason: typeof params.stopReason === 'string' ? params.stopReason : 'end_turn'
+    };
+
     // Clean up pending request
     if (correlatedRequestId) {
       pendingRequests.delete(correlatedRequestId);
     }
-    
+
     connection.socket.send(JSON.stringify(createMessage('acp:prompt:complete', {
       sessionId,
       requestId: correlatedRequestId || 'unknown',
       result: {
-        content: promptParams.content || [],
-        stopReason: (promptParams.stopReason as 'end_turn' | 'tool_use' | 'cancelled' | 'error') || 'end_turn'
+        content: Array.isArray(promptParams.content) ? promptParams.content : [],
+        stopReason: ['end_turn', 'tool_use', 'cancelled', 'error'].includes(promptParams.stopReason)
+          ? promptParams.stopReason as 'end_turn' | 'tool_use' | 'cancelled' | 'error'
+          : 'end_turn'
       }
     })));
   } else {
     // Other notifications - could be permission requests or other events
     logger.info(`Forwarding other notification to frontend [${sessionId}]: ${notification.method}`);
-    
+
     // Handle permission requests specifically
     if (notification.method === 'session/request_permission') {
-      const permParams = notification.params as {
-        toolCall?: { toolCallId: string; toolName: string; arguments: Record<string, unknown> };
-        options?: Array<{ optionId: string; title: string; description: string }>;
-      };
-      
+      const permParams = typeof notification.params === 'object' && notification.params !== null
+        ? notification.params as Record<string, unknown>
+        : {};
+      const toolCall = typeof permParams.toolCall === 'object' && permParams.toolCall !== null
+        ? permParams.toolCall as { toolCallId: string; toolName: string; arguments: Record<string, unknown> }
+        : { toolCallId: '', toolName: '', arguments: {} };
+      const options = Array.isArray(permParams.options)
+        ? permParams.options as Array<{ optionId: string; title: string; description: string }>
+        : [
+            { optionId: 'allow_once', title: 'Allow Once', description: 'Allow this operation' },
+            { optionId: 'deny', title: 'Deny', description: 'Do not allow' }
+          ];
+
       connection.socket.send(JSON.stringify(createMessage('acp:permission:request', {
         sessionId,
         requestId: correlatedRequestId || uuidv4(),
-        toolCall: permParams.toolCall || { toolCallId: '', toolName: '', arguments: {} },
-        options: permParams.options || [
-          { optionId: 'allow_once', title: 'Allow Once', description: 'Allow this operation' },
-          { optionId: 'deny', title: 'Deny', description: 'Do not allow' }
-        ]
+        toolCall,
+        options
       })));
     } else {
       // Generic notification (deprecated - should use specific types)
