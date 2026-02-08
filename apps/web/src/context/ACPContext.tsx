@@ -71,6 +71,7 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
 
   // Track processed message IDs to prevent duplicate processing
   const processedMessageIds = useRef<Set<string>>(new Set());
+  const MAX_PROCESSED_IDS = 1000; // Limit to prevent memory leak
 
   // Ref to track streaming content for access in callbacks
   const streamingContentRef = useRef<string>('');
@@ -127,6 +128,14 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
     // Mark message as processed
     if (lastMessage.id) {
       processedMessageIds.current.add(lastMessage.id);
+      // Prevent memory leak by limiting set size
+      if (processedMessageIds.current.size > MAX_PROCESSED_IDS) {
+        const iterator = processedMessageIds.current.values();
+        const firstId = iterator.next().value;
+        if (firstId) {
+          processedMessageIds.current.delete(firstId);
+        }
+      }
     }
 
     const message = lastMessage;
