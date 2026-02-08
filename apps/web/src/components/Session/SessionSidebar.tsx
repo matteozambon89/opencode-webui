@@ -1,16 +1,26 @@
 import type { FC, MouseEvent } from 'react';
-import { Plus, MessageSquare, X, Cpu } from 'lucide-react';
+import { Plus, MessageSquare, X, Cpu, Loader2 } from 'lucide-react';
 import { useACP } from '../../context/ACPContext';
+import { useState } from 'react';
 
 export const SessionSidebar: FC = () => {
   const { sessions, currentSessionId, createSession, closeSession, switchSession, isInitialized, availableModels, selectedModel, setSelectedModel } = useACP();
+  const [isCreating, setIsCreating] = useState(false);
 
   const handleNewSession = async () => {
-    if (!isInitialized) {
-      alert('Not connected to ACP server');
+    if (!isInitialized || isCreating) {
+      if (!isInitialized) {
+        alert('Not connected to ACP server');
+      }
       return;
     }
-    await createSession(undefined, selectedModel || undefined);
+    
+    setIsCreating(true);
+    try {
+      await createSession(undefined, selectedModel || undefined);
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const handleCloseSession = (e: MouseEvent, sessionId: string) => {
@@ -51,11 +61,15 @@ export const SessionSidebar: FC = () => {
 
         <button
           onClick={handleNewSession}
-          disabled={!isInitialized}
+          disabled={!isInitialized || isCreating}
           className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50"
         >
-          <Plus className="w-5 h-5" />
-          New Session
+          {isCreating ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <Plus className="w-5 h-5" />
+          )}
+          {isCreating ? 'Creating...' : 'New Session'}
         </button>
       </div>
 

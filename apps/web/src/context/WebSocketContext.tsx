@@ -1,9 +1,11 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode, type FC } from 'react';
-import type { ConnectionStatus, BridgeMessage } from '@opencode/shared';
+import type { ConnectionStatus } from '@opencode/shared';
+import type { BridgeMessage } from '@opencode/shared';
+import { createMessage, validateMessage, isValidMessageType } from '@opencode/shared';
 
 interface WebSocketContextType {
   connectionStatus: ConnectionStatus;
-  sendMessage: (message: Omit<BridgeMessage, 'id'> & { id?: string }) => void;
+  sendMessage: (type: string, payload?: unknown) => void;
   lastMessage: BridgeMessage | null;
   connectionId: string | null;
 }
@@ -13,9 +15,11 @@ const WebSocketContext = createContext<WebSocketContextType | undefined>(undefin
 interface WebSocketProviderProps {
   children: ReactNode;
   token: string;
+  onTokenRefreshed: (newToken: string) => void;
+  onAuthError: () => void;
 }
 
-export const WebSocketProvider: FC<WebSocketProviderProps> = ({ children, token }) => {
+export const WebSocketProvider: FC<WebSocketProviderProps> = ({ children, token, onTokenRefreshed, onAuthError }) => {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('connecting');
   const [lastMessage, setLastMessage] = useState<BridgeMessage | null>(null);
   const [connectionId, setConnectionId] = useState<string | null>(null);
@@ -23,8 +27,41 @@ export const WebSocketProvider: FC<WebSocketProviderProps> = ({ children, token 
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isRefreshingRef = useRef(false);
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const bridgeUrl = import.meta.env.VITE_BRIDGE_URL || 'ws://localhost:3001';
+  const httpBridgeUrl = bridgeUrl.replace('ws', 'http');
+
+  // Function to refresh token
+  const refreshToken = useCallback(async (): Promise<string | null> => {
+    if (isRefreshingRef.current) return null;
+    isRefreshingRef.current = true;
+
+    try {
+      const response = await fetch(`${httpBridgeUrl}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+
+      const data = await response.json();
+
+      if (data.success && data.token) {
+        console.log('Token refreshed successfully');
+        onTokenRefreshed(data.token);
+        return data.token;
+      } else {
+        console.warn('Token refresh failed:', data.error);
+        return null;
+      }
+    } catch (error) {
+      console.error('Token refresh error:', error);
+      return null;
+    } finally {
+      isRefreshingRef.current = false;
+    }
+  }, [token, httpBridgeUrl, onTokenRefreshed]);
 
   const connect = useCallback(() => {
     if (ws.current?.readyState === WebSocket.OPEN) return;
@@ -42,23 +79,67 @@ export const WebSocketProvider: FC<WebSocketProviderProps> = ({ children, token 
 
     socket.onmessage = (event) => {
       try {
-        const message: BridgeMessage = JSON.parse(event.data);
+        const data = JSON.parse(event.data);
+        
+        // Basic validation
+        if (!data.type || !isValidMessageType(data.type)) {
+          console.warn('Received message with invalid or unknown type:', data.type);
+          return;
+        }
+        
+        const message = data as BridgeMessage;
         setLastMessage(message);
         
-        if (message.type === 'connection_status' && message.payload && typeof message.payload === 'object' && 'connectionId' in message.payload) {
-          setConnectionId((message.payload as { connectionId: string }).connectionId);
+        // Handle connection established
+        if (message.type === 'connection:established:success' && message.payload && typeof message.payload === 'object') {
+          const payload = message.payload as { connectionId?: string };
+          if (payload.connectionId) {
+            setConnectionId(payload.connectionId);
+          }
+        }
+        
+        // Handle heartbeat response
+        if (message.type === 'connection:heartbeat:success') {
+          console.debug('Received heartbeat response');
         }
       } catch (error) {
         console.error('Failed to parse WebSocket message:', error);
       }
     };
 
-    socket.onclose = () => {
-      console.log('WebSocket disconnected');
+    socket.onclose = (event) => {
+      console.log('WebSocket disconnected, code:', event.code, 'reason:', event.reason);
       setConnectionStatus('disconnected');
       setConnectionId(null);
+
+      // Clear heartbeat interval
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
+
+      // Check for authentication error (code 1008 = Policy Violation, used for auth failures)
+      if (event.code === 1008) {
+        console.log('Authentication error detected, attempting token refresh...');
+        
+        // Clear any pending reconnect timeout
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current);
+        }
+
+        // Attempt to refresh token
+        refreshToken().then((newToken) => {
+          if (!newToken) {
+            console.error('Token refresh failed, redirecting to login...');
+            onAuthError();
+          }
+          // If refresh succeeded, the component will re-render with new token
+          // and connect() will be called again via useEffect
+        });
+        return;
+      }
       
-      // Attempt to reconnect
+      // Attempt to reconnect for other close reasons
       if (reconnectAttempts.current < maxReconnectAttempts) {
         const timeout = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
         reconnectAttempts.current++;
@@ -78,11 +159,22 @@ export const WebSocketProvider: FC<WebSocketProviderProps> = ({ children, token 
     };
 
     ws.current = socket;
-  }, [token, bridgeUrl]);
+    
+    // Start heartbeat after connection
+    heartbeatIntervalRef.current = setInterval(() => {
+      if (ws.current?.readyState === WebSocket.OPEN) {
+        const heartbeatMsg = createMessage('connection:heartbeat:request');
+        ws.current.send(JSON.stringify(heartbeatMsg));
+      }
+    }, 25000);
+  }, [token, bridgeUrl, refreshToken, onAuthError]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
+    }
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
     }
     if (ws.current) {
       ws.current.close();
@@ -90,13 +182,25 @@ export const WebSocketProvider: FC<WebSocketProviderProps> = ({ children, token 
     }
   }, []);
 
-  const sendMessage = useCallback((message: Omit<BridgeMessage, 'id'> & { id?: string }) => {
+  const sendMessage = useCallback((type: string, payload?: unknown) => {
     if (ws.current?.readyState === WebSocket.OPEN) {
-      const messageWithId: BridgeMessage = {
-        ...message,
-        id: message.id || crypto.randomUUID(),
-      };
-      ws.current.send(JSON.stringify(messageWithId));
+      // Validate message type
+      if (!isValidMessageType(type)) {
+        console.error(`Invalid message type: ${type}`);
+        return;
+      }
+      
+      // Create message with proper structure
+      const message = createMessage(type as import('@opencode/shared').MessageType, payload);
+      
+      // Validate before sending
+      const validation = validateMessage(type as import('@opencode/shared').MessageType, message);
+      if (!validation.success) {
+        console.error('Message validation failed:', validation.error);
+        return;
+      }
+      
+      ws.current.send(JSON.stringify(message));
     } else {
       console.warn('WebSocket is not connected');
     }
@@ -104,16 +208,8 @@ export const WebSocketProvider: FC<WebSocketProviderProps> = ({ children, token 
 
   useEffect(() => {
     connect();
-    
-    // Heartbeat to keep connection alive
-    const heartbeatInterval = setInterval(() => {
-      if (ws.current?.readyState === WebSocket.OPEN) {
-        ws.current.send(JSON.stringify({ type: 'ping' }));
-      }
-    }, 30000);
 
     return () => {
-      clearInterval(heartbeatInterval);
       disconnect();
     };
   }, [connect, disconnect]);

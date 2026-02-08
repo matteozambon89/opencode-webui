@@ -25,12 +25,21 @@ function App() {
     setToken(null);
   };
 
+  const handleTokenRefresh = (newToken: string) => {
+    setToken(newToken);
+  };
+
+  const handleAuthError = () => {
+    console.error('Authentication error - redirecting to login');
+    setToken(null);
+  };
+
   if (!token) {
     return <LoginPage onLogin={handleLogin} />;
   }
 
   return (
-    <WebSocketProvider token={token}>
+    <WebSocketProvider token={token} onTokenRefreshed={handleTokenRefresh} onAuthError={handleAuthError}>
       <ACPProvider>
         <Layout onLogout={handleLogout}>
           <Routes>
