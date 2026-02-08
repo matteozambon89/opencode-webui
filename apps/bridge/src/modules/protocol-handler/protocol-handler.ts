@@ -16,6 +16,7 @@ interface PendingRequest {
   resolve: (response: JSONRPCResponse) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
+  sessionId: string;
 }
 
 export class ACPProtocolHandler {
@@ -216,6 +217,7 @@ export class ACPProtocolHandler {
           onMessage: (message) => this.handleProcessMessage(newSessionId, message),
           onError: (error) => this.handleProcessError(newSessionId, error),
           onClose: (code) => this.handleProcessClose(newSessionId, code),
+          onStderr: (data) => this.handleProcessStderr(newSessionId, data),
         });
         
         // Update the sessionId variable for subsequent operations
@@ -378,6 +380,7 @@ export class ACPProtocolHandler {
         resolve,
         reject,
         timeout,
+        sessionId,
       });
 
       try {
@@ -520,20 +523,10 @@ export class ACPProtocolHandler {
     this.closeSession(sessionId);
   }
 
-  private getSessionIdFromRequestId(_requestId: string): string | undefined {
-    // Find session by checking pending requests
-    // This is a simplification - in production, track request -> session mapping
-    for (const [sessionId, session] of this.sessions.entries()) {
-      // Check if this session has pending requests
-      for (const _id of this.pendingRequests.keys()) {
-        // We need to track which session a request belongs to
-        // For now, return the first active session
-        if (session.status === 'active') {
-          return sessionId;
-        }
-      }
-    }
-    return undefined;
+  private getSessionIdFromRequestId(requestId: string): string | undefined {
+    // Look up the session ID from the pending request
+    const pending = this.pendingRequests.get(requestId);
+    return pending?.sessionId;
   }
 }
 
