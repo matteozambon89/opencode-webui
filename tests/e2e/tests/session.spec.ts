@@ -148,4 +148,53 @@ test.describe('Session Management', () => {
     
     expect(isDisabled || hasDisabledClass).toBe(true);
   });
+
+  test('should persist messages when switching between sessions', async ({ page }) => {
+    // Create first session and send a message
+    await page.getByRole('button', { name: 'New Session' }).click();
+    await page.waitForTimeout(3000);
+    
+    const textarea = page.locator('textarea').first();
+    const testMessage = 'Message in session 1 ' + Date.now();
+    await textarea.fill(testMessage);
+    await page.locator('button[type="submit"]').first().click();
+    await page.waitForTimeout(5000);
+    
+    // Create second session
+    await page.getByRole('button', { name: 'New Session' }).click();
+    await page.waitForTimeout(3000);
+    
+    // Send a message in second session
+    const testMessage2 = 'Message in session 2 ' + Date.now();
+    await textarea.fill(testMessage2);
+    await page.locator('button[type="submit"]').first().click();
+    await page.waitForTimeout(3000);
+    
+    // Get all session items
+    const sessions = await page.locator('[class*="session"]').all();
+    expect(sessions.length).toBeGreaterThanOrEqual(2);
+    
+    // Switch back to first session
+    await sessions[0].click();
+    await page.waitForTimeout(2000);
+    
+    // Verify first session's message is still visible
+    const chatContent = await page.textContent('body');
+    expect(chatContent).toContain(testMessage);
+    
+    // Switch to second session
+    await sessions[1].click();
+    await page.waitForTimeout(2000);
+    
+    // Verify second session's message is still visible
+    const chatContent2 = await page.textContent('body');
+    expect(chatContent2).toContain(testMessage2);
+    
+    // Switch back to first session again to double-check persistence
+    await sessions[0].click();
+    await page.waitForTimeout(2000);
+    
+    const chatContent3 = await page.textContent('body');
+    expect(chatContent3).toContain(testMessage);
+  });
 });
