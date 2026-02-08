@@ -5,9 +5,23 @@ import { verifyToken } from './auth.js';
 import { logger } from '../utils/logger.js';
 import { acpHandler } from '../modules/protocol-handler/index.js';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  createMessage,
+  createErrorMessage,
+  validateMessage,
+  isValidMessageType,
+  type MessageType
+} from '@opencode/shared';
 
 // Store active WebSocket connections
 const connections = new Map<string, WebSocketConnection>();
+
+// Track pending requests for correlation
+const pendingRequests = new Map<string, {
+  connectionId: string;
+  requestType: string;
+  startTime: number;
+}>();
 
 interface WebSocketConnection {
   id: string;
@@ -54,11 +68,11 @@ export async function websocketRoutes(
     connections.set(connectionId, wsConnection);
     logger.info(`WebSocket connected: ${connectionId} (user: ${user.username})`);
     
-    // Send connection success message
-    socket.send(JSON.stringify({
-      type: 'connection_status',
-      payload: { status: 'connected', connectionId }
-    }));
+    // Send connection success message using new protocol
+    socket.send(JSON.stringify(createMessage('connection:established:success', {
+      connectionId,
+      protocolVersion: '1.0.0'
+    })));
     
     // Handle incoming messages
     socket.on('message', (data: Buffer) => {
@@ -67,10 +81,11 @@ export async function websocketRoutes(
         handleMessage(connectionId, message);
       } catch (error) {
         logger.error(error);
-        socket.send(JSON.stringify({
-          type: 'error',
-          error: { code: 'INVALID_MESSAGE', message: 'Invalid JSON message' }
-        }));
+        socket.send(JSON.stringify(createErrorMessage(
+          'system:error' as MessageType,
+          'INVALID_MESSAGE',
+          'Invalid JSON message'
+        )));
       }
     });
     
@@ -93,6 +108,13 @@ export async function websocketRoutes(
       wsConnection.sessionIds.forEach(sessionId => {
         acpHandler.closeSession(sessionId);
       });
+      
+      // Clean up pending requests for this connection
+      for (const [requestId, request] of pendingRequests.entries()) {
+        if (request.connectionId === connectionId) {
+          pendingRequests.delete(requestId);
+        }
+      }
     });
     
     // Set up heartbeat check (every 25 seconds)
@@ -121,47 +143,109 @@ export async function websocketRoutes(
   });
 }
 
-async function handleMessage(connectionId: string, message: BridgeClientMessage): Promise<void> {
+async function handleMessage(connectionId: string, message: { id?: string; type?: string; payload?: unknown }): Promise<void> {
   const connection = connections.get(connectionId);
   if (!connection) {
     logger.info(`Connection not found: ${connectionId}`);
     return;
   }
   
-  const { type, payload } = message;
+  // Validate base message structure
+  if (!message.type) {
+    connection.socket.send(JSON.stringify(createErrorMessage(
+      'system:error' as MessageType,
+      'INVALID_MESSAGE',
+      'Message must have a type field'
+    )));
+    return;
+  }
+  
+  // Check if message type is valid
+  if (!isValidMessageType(message.type)) {
+    connection.socket.send(JSON.stringify(createErrorMessage(
+      'system:error' as MessageType,
+      'UNKNOWN_TYPE',
+      `Unknown message type: ${message.type}`
+    )));
+    return;
+  }
+  
+  const { type, payload, id: messageId } = message;
   
   try {
     switch (type) {
-      case 'acp:initialize': {
+      case 'connection:heartbeat:request': {
+        // Validate the message
+        const validation = validateMessage('connection:heartbeat:request', message);
+        if (!validation.success) {
+          connection.socket.send(JSON.stringify(createErrorMessage(
+            type as MessageType,
+            'INVALID_PARAMS',
+            'Message validation failed',
+            validation.error.errors
+          )));
+          return;
+        }
+        
+        const startTime = Date.now();
+        connection.socket.send(JSON.stringify(createMessage('connection:heartbeat:success', {
+          latency: Date.now() - startTime
+        })));
+        break;
+      }
+      
+      case 'acp:initialize:request': {
+        // Validate the message
+        const validation = validateMessage('acp:initialize:request', message);
+        if (!validation.success) {
+          connection.socket.send(JSON.stringify(createErrorMessage(
+            type as MessageType,
+            'INVALID_PARAMS',
+            'Message validation failed',
+            validation.error.errors
+          )));
+          return;
+        }
+        
         const result = await acpHandler.initialize(
           connectionId,
           connection.userId,
-          payload
+          payload as { protocolVersion: number; clientInfo: { name: string; version: string }; capabilities?: unknown }
         );
         
         if (result.success && result.protocolVersion) {
-          connection.socket.send(JSON.stringify({
-            type: 'acp:initialized',
-            payload: {
-              protocolVersion: result.protocolVersion,
-              agentCapabilities: result.agentCapabilities,
-              availableModels: result.availableModels
-            }
-          }));
+          connection.socket.send(JSON.stringify(createMessage('acp:initialize:success', {
+            protocolVersion: result.protocolVersion,
+            agentCapabilities: result.agentCapabilities,
+            availableModels: result.availableModels || []
+          })));
         } else {
-          connection.socket.send(JSON.stringify({
-            type: 'acp:error',
-            error: { code: 'INIT_FAILED', message: result.error || 'Initialization failed' }
-          }));
+          connection.socket.send(JSON.stringify(createErrorMessage(
+            type as MessageType,
+            'ACP_INIT_FAILED',
+            result.error || 'Initialization failed'
+          )));
         }
         break;
       }
       
-      case 'acp:session:new': {
+      case 'acp:session:create:request': {
+        // Validate the message
+        const validation = validateMessage('acp:session:create:request', message);
+        if (!validation.success) {
+          connection.socket.send(JSON.stringify(createErrorMessage(
+            type as MessageType,
+            'INVALID_PARAMS',
+            'Message validation failed',
+            validation.error.errors
+          )));
+          return;
+        }
+        
         const result = await acpHandler.createSession(
           connectionId,
           connection.userId,
-          payload
+          payload as { cwd?: string; model?: string }
         );
 
         if (result.success && result.sessionId) {
@@ -172,83 +256,156 @@ async function handleMessage(connectionId: string, message: BridgeClientMessage)
             handleSessionNotification(connectionId, result.sessionId!, notification);
           });
 
-          connection.socket.send(JSON.stringify({
-            type: 'acp:session:created',
-            payload: {
-              sessionId: result.sessionId,
-              availableModels: result.availableModels,
-              currentModel: result.currentModel
+          logger.info(`[WebSocket] Sending acp:session:create:success with authMethods: ${JSON.stringify(result.authMethods)}, requiresAuth: ${result.requiresAuth}`);
+          connection.socket.send(JSON.stringify(createMessage('acp:session:create:success', {
+            sessionId: result.sessionId,
+            availableModels: result.availableModels || [],
+            currentModel: result.currentModel || '',
+            modes: {
+              currentModeId: 'build', // Default mode
+              availableModes: [
+                { id: 'ask', name: 'Ask' },
+                { id: 'build', name: 'Build' }
+              ]
             }
-          }));
+          })));
         } else {
-          connection.socket.send(JSON.stringify({
-            type: 'acp:error',
-            error: { code: 'SESSION_CREATE_FAILED', message: result.error || 'Failed to create session' }
-          }));
+          connection.socket.send(JSON.stringify(createErrorMessage(
+            type as MessageType,
+            'SESSION_CREATE_FAILED',
+            result.error || 'Failed to create session'
+          )));
         }
         break;
       }
       
-      case 'acp:session:prompt': {
-        const { sessionId, content, agentMode } = payload as { sessionId: string; content: Array<{ type: string; text?: string }>; agentMode?: 'plan' | 'build' };
+      case 'acp:prompt:send:request': {
+        // Validate the message
+        const validation = validateMessage('acp:prompt:send:request', message);
+        if (!validation.success) {
+          connection.socket.send(JSON.stringify(createErrorMessage(
+            type as MessageType,
+            'INVALID_PARAMS',
+            'Message validation failed',
+            validation.error.errors
+          )));
+          return;
+        }
+        
+        logger.info(`[WebSocket] Received acp:prompt:send:request from frontend`);
+        const typedPayload = payload as { sessionId: string; content: Array<{ type: string; text?: string }>; agentMode?: 'plan' | 'build' };
+        const { sessionId, content, agentMode } = typedPayload;
+        logger.info(`[WebSocket] Prompt details: sessionId=${sessionId}, agentMode=${agentMode}, contentBlocks=${content.length}`);
+        
+        // Track this request for correlation
+        const requestId = messageId || uuidv4();
+        pendingRequests.set(requestId, {
+          connectionId,
+          requestType: type,
+          startTime: Date.now()
+        });
+        
         const result = await acpHandler.sendPrompt(sessionId, content, agentMode);
         
         if (!result.success) {
-          connection.socket.send(JSON.stringify({
-            type: 'acp:error',
-            error: { code: 'PROMPT_FAILED', message: result.error || 'Failed to send prompt' }
-          }));
+          logger.error(`[WebSocket] Failed to send prompt: ${result.error}`);
+          pendingRequests.delete(requestId);
+          connection.socket.send(JSON.stringify(createErrorMessage(
+            type as MessageType,
+            'PROMPT_FAILED',
+            result.error || 'Failed to send prompt'
+          )));
+        } else {
+          logger.info(`[WebSocket] Prompt sent successfully to OpenCode`);
+          // Send acceptance confirmation
+          connection.socket.send(JSON.stringify(createMessage('acp:prompt:send:success', {
+            requestId,
+            status: 'accepted'
+          })));
         }
         // Successful prompts get responses via notifications (streaming)
         break;
       }
       
-      case 'acp:session:cancel': {
-        const { sessionId } = payload;
+      case 'acp:prompt:cancel:request': {
+        // Validate the message
+        const validation = validateMessage('acp:prompt:cancel:request', message);
+        if (!validation.success) {
+          connection.socket.send(JSON.stringify(createErrorMessage(
+            type as MessageType,
+            'INVALID_PARAMS',
+            'Message validation failed',
+            validation.error.errors
+          )));
+          return;
+        }
+        
+        const typedPayload = payload as { sessionId: string };
+        const { sessionId } = typedPayload;
         await acpHandler.cancelSession(sessionId);
-        connection.socket.send(JSON.stringify({
-          type: 'acp:session:cancelled',
-          payload: { sessionId }
-        }));
+        connection.socket.send(JSON.stringify(createMessage('acp:prompt:cancel:success', {
+          sessionId
+        })));
         break;
       }
       
-      case 'acp:session:close': {
-        const { sessionId } = payload;
+      case 'acp:session:close:request': {
+        // Validate the message
+        const validation = validateMessage('acp:session:close:request', message);
+        if (!validation.success) {
+          connection.socket.send(JSON.stringify(createErrorMessage(
+            type as MessageType,
+            'INVALID_PARAMS',
+            'Message validation failed',
+            validation.error.errors
+          )));
+          return;
+        }
+        
+        const typedPayload = payload as { sessionId: string };
+        const { sessionId } = typedPayload;
         await acpHandler.closeSession(sessionId);
         connection.sessionIds.delete(sessionId);
-        connection.socket.send(JSON.stringify({
-          type: 'acp:session:closed',
-          payload: { sessionId }
-        }));
+        connection.socket.send(JSON.stringify(createMessage('acp:session:close:success', {
+          sessionId
+        })));
         break;
       }
       
-      case 'ping': {
-        // Mark connection as alive when receiving application-level ping
-        connection.isAlive = true;
-        connection.socket.send(JSON.stringify({ type: 'pong' }));
-        logger.debug(`Received ping from connection ${connectionId}`);
+      case 'acp:permission:response': {
+        // Validate the message
+        const validation = validateMessage('acp:permission:response', message);
+        if (!validation.success) {
+          connection.socket.send(JSON.stringify(createErrorMessage(
+            type as MessageType,
+            'INVALID_PARAMS',
+            'Message validation failed',
+            validation.error.errors
+          )));
+          return;
+        }
+        
+        // TODO: Implement permission response handling
+        logger.info(`[WebSocket] Received permission response: ${JSON.stringify(payload)}`);
         break;
       }
       
       default: {
-        logger.warn(`Unknown message type: ${type}`);
-        connection.socket.send(JSON.stringify({
-          type: 'error',
-          error: { code: 'UNKNOWN_TYPE', message: `Unknown message type: ${type}` }
-        }));
+        logger.warn(`Unhandled message type: ${type}`);
+        connection.socket.send(JSON.stringify(createErrorMessage(
+          'system:error' as MessageType,
+          'UNKNOWN_TYPE',
+          `Unhandled message type: ${type}`
+        )));
       }
     }
   } catch (error) {
     logger.error(error);
-    connection.socket.send(JSON.stringify({
-      type: 'error',
-      error: { 
-        code: 'INTERNAL_ERROR', 
-        message: error instanceof Error ? error.message : 'Internal server error' 
-      }
-    }));
+    connection.socket.send(JSON.stringify(createErrorMessage(
+      'system:error' as MessageType,
+      'INTERNAL_ERROR',
+      error instanceof Error ? error.message : 'Internal server error'
+    )));
   }
 }
 
@@ -257,58 +414,81 @@ function handleSessionNotification(
   sessionId: string, 
   notification: JSONRPCNotification
 ): void {
+  logger.info(`handleSessionNotification [${connectionId}/${sessionId}]: method=${notification.method}`);
+  
   const connection = connections.get(connectionId);
   if (!connection) {
+    logger.warn(`Connection not found: ${connectionId}`);
     return;
   }
   
-  // Forward session/update notifications to the client
+  // Find the most recent pending prompt request for this session to correlate
+  let correlatedRequestId: string | undefined;
+  for (const [requestId, request] of pendingRequests.entries()) {
+    if (request.connectionId === connectionId) {
+      correlatedRequestId = requestId;
+      break;
+    }
+  }
+  
+  // Forward session/update notifications to the client using new protocol
   if (notification.method === 'session/update') {
+    logger.info(`Forwarding session/update as acp:prompt:update to frontend [${sessionId}]`);
+    const params = notification.params as { update?: unknown };
+    connection.socket.send(JSON.stringify(createMessage('acp:prompt:update', {
+      sessionId,
+      requestId: correlatedRequestId || 'unknown',
+      update: params.update
+    })));
+  } else if (notification.method === 'session/error') {
+    // Forward error notifications from stderr using new protocol
+    logger.info(`Forwarding session/error as acp:session:error to frontend [${sessionId}]`);
+    const errorParams = notification.params as { error: { code: string; message: string; details?: string } };
     connection.socket.send(JSON.stringify({
-      type: 'acp:session:update',
-      payload: {
-        sessionId,
-        update: notification.params
-      }
+      ...createMessage('acp:session:error', { sessionId }),
+      error: errorParams.error
     }));
   } else if (notification.method === 'session/prompt') {
     // This is the final response to a prompt
-    connection.socket.send(JSON.stringify({
-      type: 'acp:session:completed',
-      payload: {
-        sessionId,
-        result: notification.params
+    logger.info(`Forwarding session/prompt as acp:prompt:complete to frontend [${sessionId}]`);
+    const promptParams = notification.params as { content?: unknown; stopReason?: string };
+    
+    // Clean up pending request
+    if (correlatedRequestId) {
+      pendingRequests.delete(correlatedRequestId);
+    }
+    
+    connection.socket.send(JSON.stringify(createMessage('acp:prompt:complete', {
+      sessionId,
+      requestId: correlatedRequestId || 'unknown',
+      result: {
+        content: promptParams.content || [],
+        stopReason: (promptParams.stopReason as 'end_turn' | 'tool_use' | 'cancelled' | 'error') || 'end_turn'
       }
-    }));
+    })));
   } else {
-    // Other notifications
-    connection.socket.send(JSON.stringify({
-      type: 'acp:notification',
-      payload: {
+    // Other notifications - could be permission requests or other events
+    logger.info(`Forwarding other notification to frontend [${sessionId}]: ${notification.method}`);
+    
+    // Handle permission requests specifically
+    if (notification.method === 'session/request_permission') {
+      const permParams = notification.params as {
+        toolCall?: { toolCallId: string; toolName: string; arguments: Record<string, unknown> };
+        options?: Array<{ optionId: string; title: string; description: string }>;
+      };
+      
+      connection.socket.send(JSON.stringify(createMessage('acp:permission:request', {
         sessionId,
-        method: notification.method,
-        params: notification.params
-      }
-    }));
+        requestId: correlatedRequestId || uuidv4(),
+        toolCall: permParams.toolCall || { toolCallId: '', toolName: '', arguments: {} },
+        options: permParams.options || [
+          { optionId: 'allow_once', title: 'Allow Once', description: 'Allow this operation' },
+          { optionId: 'deny', title: 'Deny', description: 'Do not allow' }
+        ]
+      })));
+    } else {
+      // Generic notification (deprecated - should use specific types)
+      logger.warn(`Received unhandled notification type: ${notification.method}`);
+    }
   }
 }
-
-export function getConnection(connectionId: string): WebSocketConnection | undefined {
-  return connections.get(connectionId);
-}
-
-export function broadcastToConnection(connectionId: string, message: unknown): void {
-  const connection = connections.get(connectionId);
-  if (connection && connection.socket.readyState === 1) { // WebSocket.OPEN
-    connection.socket.send(JSON.stringify(message));
-  }
-}
-
-// Message types from client
-type BridgeClientMessage =
-  | { type: 'acp:initialize'; payload: { protocolVersion: number; clientInfo: { name: string; version: string }; capabilities?: unknown } }
-  | { type: 'acp:session:new'; payload?: { cwd?: string } }
-  | { type: 'acp:session:prompt'; payload: { sessionId: string; content: Array<{ type: string; text?: string }> } }
-  | { type: 'acp:session:cancel'; payload: { sessionId: string } }
-  | { type: 'acp:session:close'; payload: { sessionId: string } }
-  | { type: 'ping'; payload?: never };
