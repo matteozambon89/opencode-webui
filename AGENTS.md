@@ -163,15 +163,26 @@ VITE_LOG_LEVEL=info
 
 ### When to Commit
 
-**During Plan Mode:**
-- Do NOT commit - planning is for analysis and creating implementation plans
-- Consider commit strategy when planning: identify logical chunks of work that will become commits
+**Mode-Based Commit Strategy:**
+
+| Mode | Commit Behavior |
+|------|----------------|
+| **Plan Mode** | Do NOT commit. Planning is for analysis and creating implementation plans only. |
+| **Build/Implementation** | Commit frequently after completing each logical unit of work. |
 
 **During Build/Implementation:**
-- Commit after completing each logical unit of work
+- Commit after completing each logical unit of work (atomic commits)
 - Commit when tests pass and linting is clean
 - Commit before switching contexts or tasks
+- Make commits small and focused - break large changes into multiple commits
 - Do not commit secrets, credentials, or .env files
+
+**What Constitutes a "Logical Unit of Work":**
+- Single bug fix
+- One feature or enhancement
+- A coherent refactoring
+- Related test additions
+- Documentation updates for a specific change
 
 ### Commit Message Format
 
