@@ -1,14 +1,11 @@
-// WebSocket Message Types for Bridge Communication
-export type BridgeMessageType = 
-  | 'acp_request'
-  | 'acp_response'
-  | 'acp_notification'
-  | 'error'
-  | 'connection_status'
-  | 'file_upload'
-  | 'file_download';
+import type { MessageType } from '../schemas/bridge.js';
 
-export interface BridgeMessage {
+// Re-export MessageType as BridgeMessageType for backwards compatibility
+export type BridgeMessageType = MessageType;
+
+// Legacy type - will be deprecated in favor of BridgeMessage from schemas
+/** @deprecated Use BridgeMessage from schemas/bridge instead */
+export interface LegacyBridgeMessage {
   type: BridgeMessageType;
   id?: string;
   payload?: unknown;
@@ -42,6 +39,7 @@ export interface ChatMessage {
   isStreaming?: boolean;
   toolCalls?: ToolCallDisplay[];
   agentMode?: 'plan' | 'build';
+  phases?: MessagePhase[]; // Array of phases for assistant messages (thinking, tools, response)
 }
 
 export interface ToolCallDisplay {
@@ -51,6 +49,36 @@ export interface ToolCallDisplay {
   output?: string;
   status: 'pending' | 'running' | 'completed' | 'error';
 }
+
+// Message Phases - for displaying agent thinking and tool execution
+export interface ThoughtPhase {
+  type: 'thought';
+  id: string;
+  content: string;
+  timestamp: Date;
+  isExpanded?: boolean;
+}
+
+export interface ToolCallPhase {
+  type: 'tool_call';
+  id: string;
+  toolCallId: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+  status: 'pending' | 'executing' | 'completed' | 'error';
+  output?: string;
+  error?: string;
+  timestamp: Date;
+}
+
+export interface ResponsePhase {
+  type: 'response';
+  id: string;
+  content: string;
+  timestamp: Date;
+}
+
+export type MessagePhase = ThoughtPhase | ToolCallPhase | ResponsePhase;
 
 // Streaming Content
 export interface StreamingContent {
@@ -78,4 +106,11 @@ export interface FileDownloadResult {
   filename: string;
   content: string; // base64
   mimeType: string;
+}
+
+// Auth Method
+export interface AuthMethod {
+  id: string;
+  name: string;
+  description: string;
 }

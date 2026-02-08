@@ -1,3 +1,20 @@
+// Import types from schemas for internal use
+import type {
+  ContentBlock,
+  ToolCall,
+  ToolCallUpdate
+} from '../schemas/bridge.js';
+
+// Re-export specific types needed by consumers
+export type { AgentMode } from '../schemas/bridge.js';
+export type { ContentBlock } from '../schemas/bridge.js';
+export type { TextContent } from '../schemas/bridge.js';
+export type { ImageContent } from '../schemas/bridge.js';
+export type { ResourceContent } from '../schemas/bridge.js';
+export type { ToolCall } from '../schemas/bridge.js';
+export type { ToolCallUpdate } from '../schemas/bridge.js';
+export type { ErrorDetails } from '../schemas/bridge.js';
+
 // JSON-RPC 2.0 Message Types
 export interface JSONRPCRequest {
   jsonrpc: '2.0';
@@ -67,9 +84,6 @@ export interface AgentCapabilities {
   };
 }
 
-// Agent Mode
-export type AgentMode = 'plan' | 'build';
-
 // Model Info
 export interface ModelInfo {
   id: string;
@@ -133,21 +147,7 @@ export interface MCPServerConfig {
   url?: string;
 }
 
-// Content Blocks
-export interface TextContent {
-  type: 'text';
-  text: string;
-}
-
-export interface ImageContent {
-  type: 'image';
-  source: {
-    type: 'base64';
-    mediaType: string;
-    data: string;
-  };
-}
-
+// Additional Content Types (not in schemas)
 export interface AudioContent {
   type: 'audio';
   source: {
@@ -157,38 +157,12 @@ export interface AudioContent {
   };
 }
 
-export interface ResourceContent {
-  type: 'resource';
-  uri: string;
-  mimeType?: string;
-  text?: string;
-}
-
 export interface ResourceLinkContent {
   type: 'resource_link';
   uri: string;
 }
 
-export type ContentBlock = 
-  | TextContent 
-  | ImageContent 
-  | AudioContent 
-  | ResourceContent 
-  | ResourceLinkContent;
-
-// Prompt
-export interface SessionPromptParams {
-  sessionId: string;
-  content: ContentBlock[];
-  agentMode?: AgentMode;
-}
-
-export interface SessionPromptResult {
-  content: ContentBlock[];
-  stopReason: 'done' | 'cancelled' | 'error' | 'length';
-}
-
-// Session Updates (Streaming)
+// Session Updates (Streaming) - Legacy format for internal use
 export interface AgentMessageChunk {
   role: 'assistant';
   content: ContentBlock[];
@@ -196,20 +170,6 @@ export interface AgentMessageChunk {
 
 export interface AgentThoughtChunk {
   thought: string;
-}
-
-export interface ToolCall {
-  toolCallId: string;
-  type: 'function';
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
-
-export interface ToolCallUpdate {
-  toolCallId: string;
-  output: string;
 }
 
 export interface PlanStep {
