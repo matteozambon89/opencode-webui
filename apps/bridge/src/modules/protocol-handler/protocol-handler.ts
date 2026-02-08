@@ -9,7 +9,7 @@ import type {
   InitializeResult,
   SessionNewResult,
 } from '@opencode/shared';
-import type { SessionInfo } from './types.js';
+import type { SessionInfo, AuthMethod } from './types.js';
 
 // Pending requests waiting for response
 interface PendingRequest {
@@ -114,8 +114,8 @@ export class ACPProtocolHandler {
     connectionId: string,
     userId: string,
     params?: { cwd?: string; model?: string }
-  ): Promise<{ success: boolean; sessionId?: string; availableModels?: string[]; currentModel?: string; error?: string }> {
-    const sessionId = uuidv4();
+  ): Promise<{ success: boolean; sessionId?: string; availableModels?: string[]; currentModel?: string; authMethods?: AuthMethod[]; requiresAuth?: boolean; error?: string }> {
+    let sessionId = uuidv4();
 
     logger.info({ cwd: params?.cwd, model: params?.model }, `Creating ACP session ${sessionId}`);
 
@@ -128,6 +128,7 @@ export class ACPProtocolHandler {
         onMessage: (message) => this.handleProcessMessage(sessionId, message),
         onError: (error) => this.handleProcessError(sessionId, error),
         onClose: (code) => this.handleProcessClose(sessionId, code),
+        onStderr: (data) => this.handleProcessStderr(sessionId, data),
       });
 
       // Create session info
@@ -160,6 +161,20 @@ export class ACPProtocolHandler {
         throw new Error(`Initialize failed: ${initResponse.error.message}`);
       }
 
+      // Extract auth methods from initialize response
+      // Note: authMethods indicate available authentication options, not that auth is required
+      const initResult = initResponse.result as InitializeResult & { authMethods?: Array<{ id: string; name: string; description: string }> };
+      if (initResult.authMethods && initResult.authMethods.length > 0) {
+        session.authMethods = initResult.authMethods.map((auth) => ({
+          id: auth.id,
+          name: auth.name,
+          description: auth.description,
+        }));
+        // Only require auth if explicitly indicated (e.g., via env var check or error)
+        // When OPENCODE_API_KEY is set, auth is already satisfied even though methods are listed
+        logger.info(`Session ${sessionId} has available auth methods: ${initResult.authMethods.map((a) => a.name).join(', ')}`);
+      }
+
       // Step 2: Send session/new request with required parameters
       const sessionNewRequest: JSONRPCRequest = {
         jsonrpc: '2.0',
@@ -182,10 +197,29 @@ export class ACPProtocolHandler {
       
       // Update session with OpenCode's session ID if different
       if (sessionResult.sessionId && sessionResult.sessionId !== sessionId) {
-        session.sessionId = sessionResult.sessionId;
+        const newSessionId = sessionResult.sessionId;
+        logger.info(`Session ID changed from ${sessionId} to ${newSessionId}, migrating process...`);
+        
+        // Update session info
+        session.sessionId = newSessionId;
+        
         // Update the sessions map with the correct ID
         this.sessions.delete(sessionId);
-        this.sessions.set(sessionResult.sessionId, session);
+        this.sessions.set(newSessionId, session);
+        
+        // CRITICAL: Migrate the process in processManager to use the new sessionId
+        processManager.migrateProcess(sessionId, newSessionId);
+        
+        // CRITICAL: Re-register handlers with the NEW sessionId
+        // The original handlers (lines 127-131) captured the OLD sessionId by value in their closures
+        processManager.registerHandler(newSessionId, {
+          onMessage: (message) => this.handleProcessMessage(newSessionId, message),
+          onError: (error) => this.handleProcessError(newSessionId, error),
+          onClose: (code) => this.handleProcessClose(newSessionId, code),
+        });
+        
+        // Update the sessionId variable for subsequent operations
+        sessionId = newSessionId;
       }
 
       session.isInitialized = true;
@@ -198,7 +232,9 @@ export class ACPProtocolHandler {
       logger.info({ 
         sessionId: sessionResult.sessionId || sessionId, 
         modelCount: availableModels.length,
-        currentModel 
+        currentModel,
+        authMethods: session.authMethods,
+        requiresAuth: session.requiresAuth
       }, `ACP session created successfully`);
 
       return {
@@ -206,6 +242,8 @@ export class ACPProtocolHandler {
         sessionId: sessionResult.sessionId || sessionId,
         availableModels,
         currentModel,
+        authMethods: session.authMethods,
+        requiresAuth: session.requiresAuth,
       };
     } catch (error) {
       logger.error(error);
@@ -225,10 +263,12 @@ export class ACPProtocolHandler {
   ): Promise<{ success: boolean; error?: string }> {
     const session = this.sessions.get(sessionId);
     if (!session) {
+      logger.error(`sendPrompt: Session not found: ${sessionId}`);
       return { success: false, error: 'Session not found' };
     }
 
     if (session.status === 'closed') {
+      logger.error(`sendPrompt: Session is closed: ${sessionId}`);
       return { success: false, error: 'Session is closed' };
     }
 
@@ -238,18 +278,22 @@ export class ACPProtocolHandler {
       method: 'session/prompt',
       params: {
         sessionId,
-        content,
+        prompt: content,
         ...(agentMode ? { agentMode } : {}),
       },
     };
+
+    logger.info(`sendPrompt [${sessionId}]: Sending session/prompt request with ${content.length} content blocks`);
+    logger.debug(`Request payload: ${JSON.stringify(request)}`);
 
     try {
       // Send the request but don't wait for the final response
       // The streaming updates will come via notifications
       processManager.sendMessage(sessionId, request);
+      logger.info(`sendPrompt [${sessionId}]: Request sent successfully`);
       return { success: true };
     } catch (error) {
-      logger.error(error);
+      logger.error(`sendPrompt [${sessionId}] error: ${error}`);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to send prompt',
@@ -347,6 +391,10 @@ export class ACPProtocolHandler {
   }
 
   private handleProcessMessage(sessionId: string, message: JSONRPCMessage): void {
+    const msgId = (message as {id?: string}).id;
+    const msgMethod = (message as {method?: string}).method;
+    logger.info(`handleProcessMessage [${sessionId}]: hasId=${'id' in message}, id=${msgId}, hasMethod=${'method' in message}, method=${msgMethod}`);
+
     // Check if it's a response to a pending request
     if ('id' in message && message.id !== undefined) {
       const pending = this.pendingRequests.get(String(message.id));
@@ -361,20 +409,45 @@ export class ACPProtocolHandler {
         }
         return;
       }
+      
+      // Response with id but not in pending requests - forward to handler as notification
+      // This handles async responses from OpenCode (e.g., session/prompt responses)
+      logger.info(`Forwarding async response [${sessionId}]: id=${msgId}`);
+      const handler = this.notificationHandlers.get(sessionId);
+      if (handler) {
+        // Convert response to notification format for the handler
+        const response = message as JSONRPCResponse;
+        logger.info(`Full response [${sessionId}]: ${JSON.stringify(message)}`);
+        const notification = {
+          jsonrpc: '2.0',
+          method: 'session/prompt',
+          params: response.result || { content: [], stopReason: 'unknown' },
+        } as JSONRPCNotification;
+        handler(notification);
+      } else {
+        logger.warn(`No notification handler found for session ${sessionId}, available handlers: ${Array.from(this.notificationHandlers.keys()).join(', ')}`);
+      }
+      return;
     }
 
     // It's a notification - forward to handler
     if ('method' in message && !('id' in message)) {
+      logger.info(`Forwarding notification [${sessionId}]: method=${msgMethod}`);
       const handler = this.notificationHandlers.get(sessionId);
       if (handler) {
         handler(message as JSONRPCNotification);
+      } else {
+        logger.warn(`No notification handler found for session ${sessionId}, available handlers: ${Array.from(this.notificationHandlers.keys()).join(', ')}`);
       }
     }
   }
 
   private handleProcessError(sessionId: string, error: Error): void {
     logger.error(error);
-    
+
+    // Broadcast error to UI via stderr handler
+    this.handleProcessStderr(sessionId, `Process error: ${error.message}`);
+
     // Reject all pending requests for this session
     for (const [id, pending] of this.pendingRequests.entries()) {
       if (this.getSessionIdFromRequestId(id) === sessionId) {
@@ -385,12 +458,62 @@ export class ACPProtocolHandler {
     }
   }
 
+  private handleProcessStderr(sessionId: string, data: string): void {
+    logger.warn(`OpenCode stderr error [${sessionId}]: ${data}`);
+    
+    // Extract error message from stderr
+    let errorMessage = 'An error occurred while processing your request';
+    
+    if (data.includes('Rate limit exceeded')) {
+      errorMessage = 'Rate limit exceeded. Please try again later.';
+    } else if (data.includes('Unauthorized') || data.includes('401')) {
+      errorMessage = 'Authentication failed. Please check your API key.';
+    } else if (data.includes('403')) {
+      errorMessage = 'Access denied. Please check your permissions.';
+    } else if (data.includes('Invalid API key')) {
+      errorMessage = 'Invalid API key. Please check your configuration.';
+    } else if (data.includes('quota exceeded')) {
+      errorMessage = 'API quota exceeded. Please check your usage limits.';
+    } else if (data.includes('AI_APICallError')) {
+      // Try to extract more specific error details
+      const match = data.match(/message[=:]([^,\n]+)/i);
+      if (match) {
+        errorMessage = match[1].trim();
+      }
+    }
+    
+    // Forward error as notification to handler
+    const handler = this.notificationHandlers.get(sessionId);
+    if (handler) {
+      const notification: JSONRPCNotification = {
+        jsonrpc: '2.0',
+        method: 'session/error',
+        params: {
+          sessionId,
+          error: {
+            code: 'API_ERROR',
+            message: errorMessage,
+            details: data
+          }
+        }
+      };
+      handler(notification);
+    }
+  }
+
   private handleProcessClose(sessionId: string, code: number | null): void {
     logger.info(`Process closed for session ${sessionId} with code ${code}`);
-    
+
     const session = this.sessions.get(sessionId);
     if (session) {
       session.status = 'closed';
+    }
+
+    // Broadcast error to UI if process exited with non-zero code or unexpectedly
+    if (code !== 0 && code !== null) {
+      this.handleProcessStderr(sessionId, `Process exited with code ${code}`);
+    } else if (code === null) {
+      this.handleProcessStderr(sessionId, 'Process terminated unexpectedly');
     }
 
     // Clean up

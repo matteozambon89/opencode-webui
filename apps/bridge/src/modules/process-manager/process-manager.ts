@@ -21,7 +21,7 @@ export class OpenCodeProcessManager {
     // Detect opencode command
     const opencodeCommand = await this.detectOpenCodeCommand();
 
-    const args = ['acp'];
+    const args = ['acp', '--print-logs'];
     if (cwd) {
       args.push('--cwd', cwd);
     }
@@ -46,23 +46,73 @@ export class OpenCodeProcessManager {
       model,
     };
 
-    this.processes.set(sessionId, processInfo);
-
     // Handle stdout for JSON-RPC messages
     const rl = createInterface({
       input: childProcess.stdout!,
       crlfDelay: Infinity,
     });
 
+    // Store readline interface in process info for potential cleanup
+    processInfo.readline = rl;
+
+    // IMPORTANT: Use a lookup to get the CURRENT sessionId from processInfo
+    // This allows the sessionId to be updated during migration
     rl.on('line', (line) => {
-      this.handleProcessOutput(sessionId, line);
+      // Look up the current sessionId from the processInfo object
+      // This will reflect any migrations that have occurred
+      const currentSessionId = processInfo.sessionId;
+      this.handleProcessOutput(currentSessionId, line);
     });
 
-    // Handle stderr for logging
+    this.processes.set(sessionId, processInfo);
+
+    // Handle stderr for logging and error detection
     childProcess.stderr!.on('data', (data: Buffer) => {
-      const output = data.toString().trim();
-      if (output) {
-        logger.debug(`OpenCode stderr [${sessionId}]: ${output}`);
+      const output = data.toString();
+      if (output.trim()) {
+        // Look up the current sessionId from the processInfo to handle migrations
+        const currentSessionId = processInfo.sessionId;
+        logger.debug(`OpenCode stderr [${currentSessionId}]: ${output.trim()}`);
+        
+        // Check for error patterns in stderr and forward to handler
+        // Check both the full output and individual lines
+        const errorPatterns = [
+          /Rate limit exceeded/i,
+          /AI_APICallError/i,
+          /Unauthorized/i,
+          /401/i,
+          /403/i,
+          /Authentication failed/i,
+          /Invalid API key/i,
+          /quota exceeded/i
+        ];
+        
+        // Check each line separately in case data is split across multiple chunks
+        const lines = output.split('\n');
+        let hasError = false;
+        let errorLine = '';
+        
+        for (const line of lines) {
+          if (errorPatterns.some(pattern => pattern.test(line))) {
+            hasError = true;
+            errorLine = line;
+            break;
+          }
+        }
+        
+        // Also check the full output
+        if (!hasError && errorPatterns.some(pattern => pattern.test(output))) {
+          hasError = true;
+          errorLine = output;
+        }
+        
+        if (hasError) {
+          logger.info(`Detected error in stderr [${currentSessionId}]: ${errorLine.substring(0, 200)}`);
+          const handler = this.handlers.get(currentSessionId);
+          if (handler?.onStderr) {
+            handler.onStderr(errorLine);
+          }
+        }
       }
     });
 
@@ -149,16 +199,43 @@ export class OpenCodeProcessManager {
     }
   }
 
+  migrateProcess(oldSessionId: string, newSessionId: string): void {
+    const processInfo = this.processes.get(oldSessionId);
+    if (!processInfo) {
+      logger.warn(`Cannot migrate process: no process found for session ${oldSessionId}`);
+      return;
+    }
+
+    // Update the process info with new sessionId
+    processInfo.sessionId = newSessionId;
+
+    // Move process to new sessionId
+    this.processes.set(newSessionId, processInfo);
+    this.processes.delete(oldSessionId);
+
+    // Move handler to new sessionId if it exists
+    const handler = this.handlers.get(oldSessionId);
+    if (handler) {
+      this.handlers.set(newSessionId, handler);
+      this.handlers.delete(oldSessionId);
+    }
+
+    logger.info(`Migrated process from ${oldSessionId} to ${newSessionId}`);
+  }
+
   private handleProcessOutput(sessionId: string, line: string): void {
     if (!line.trim()) return;
 
-    logger.debug(`Received from OpenCode [${sessionId}]: ${line}`);
+    logger.info(`Received from OpenCode [${sessionId}]: ${line}`);
 
     try {
       const message = JSON.parse(line) as JSONRPCMessage;
+      logger.info(`Parsed JSON-RPC message [${sessionId}]: method=${(message as {method?: string}).method}, id=${(message as {id?: string}).id}`);
       const handler = this.handlers.get(sessionId);
       if (handler) {
         handler.onMessage(message);
+      } else {
+        logger.warn(`No handler found for session ${sessionId}`);
       }
     } catch (error) {
       logger.error(error);

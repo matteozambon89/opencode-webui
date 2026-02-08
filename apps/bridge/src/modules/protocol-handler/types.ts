@@ -11,6 +11,12 @@ export interface ACPMessageHandler {
   onError: (error: JSONRPCError) => void;
 }
 
+export interface AuthMethod {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface SessionInfo {
   sessionId: string;
   connectionId: string;
@@ -19,4 +25,6 @@ export interface SessionInfo {
   model?: string;
   isInitialized: boolean;
   status: 'active' | 'closed';
+  authMethods?: AuthMethod[];
+  requiresAuth?: boolean;
 }
