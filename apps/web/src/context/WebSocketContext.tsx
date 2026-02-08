@@ -135,6 +135,9 @@ export const WebSocketProvider: FC<WebSocketProviderProps> = ({ children, token,
           }
           // If refresh succeeded, the component will re-render with new token
           // and connect() will be called again via useEffect
+        }).catch((err) => {
+          console.error('Unexpected error during token refresh:', err);
+          onAuthError();
         });
         return;
       }
