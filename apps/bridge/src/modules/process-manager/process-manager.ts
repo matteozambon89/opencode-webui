@@ -267,6 +267,10 @@ export class OpenCodeProcessManager {
   }
 
   private cleanup(sessionId: string): void {
+    const processInfo = this.processes.get(sessionId);
+    if (processInfo?.readline) {
+      processInfo.readline.close();
+    }
     this.processes.delete(sessionId);
     this.handlers.delete(sessionId);
   }
