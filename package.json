@@ -1,7 +1,7 @@
 {
-  "name": "opencode-ui-acp",
-  "version": "1.0.0",
-  "description": "Browser-based remote GUI for OpenCode using the Agent Client Protocol (ACP)",
+  "name": "opencode-webui",
+  "version": "0.0.1",
+  "description": "Web-based chat interface for OpenCode AI - real-time streaming chat with session management, file uploads, and multi-model support via WebSocket bridge",
   "private": true,
   "type": "module",
   "scripts": {
@@ -30,9 +30,11 @@
     "chat",
     "websocket",
     "react",
-    "fastify"
+    "fastify",
+    "webui",
+    "web-interface"
   ],
-  "author": "OpenCode UI ACP Contributors",
+  "author": "OpenCode Web UI Contributors",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^22.13.0",
