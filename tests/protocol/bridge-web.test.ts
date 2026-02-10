@@ -173,6 +173,165 @@ describe('Bridge-Web Protocol', () => {
       expect(result.success).toBe(true);
     });
 
+    it('should validate acp:prompt:update with thought_chunk', () => {
+      const message = {
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        type: 'acp:prompt:update',
+        timestamp: Date.now(),
+        payload: {
+          sessionId: 'sess-123',
+          requestId: 'req-123',
+          update: {
+            kind: 'thought_chunk',
+            content: { thought: 'Thinking about this...' }
+          }
+        }
+      };
+
+      const result = Schemas['acp:prompt:update'].safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it('should validate acp:prompt:update with tool_call', () => {
+      const message = {
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        type: 'acp:prompt:update',
+        timestamp: Date.now(),
+        payload: {
+          sessionId: 'sess-123',
+          requestId: 'req-123',
+          update: {
+            kind: 'tool_call',
+            toolCall: {
+              toolCallId: 'call-123',
+              toolName: 'write_file',
+              arguments: { path: '/test.txt' },
+              status: 'pending'
+            }
+          }
+        }
+      };
+
+      const result = Schemas['acp:prompt:update'].safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it('should validate acp:prompt:update with tool_call_update', () => {
+      const message = {
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        type: 'acp:prompt:update',
+        timestamp: Date.now(),
+        payload: {
+          sessionId: 'sess-123',
+          requestId: 'req-123',
+          update: {
+            kind: 'tool_call_update',
+            toolCall: {
+              toolCallId: 'call-123',
+              status: 'completed',
+              output: 'File written successfully'
+            }
+          }
+        }
+      };
+
+      const result = Schemas['acp:prompt:update'].safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it('should validate acp:prompt:update with plan', () => {
+      const message = {
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        type: 'acp:prompt:update',
+        timestamp: Date.now(),
+        payload: {
+          sessionId: 'sess-123',
+          requestId: 'req-123',
+          update: {
+            kind: 'plan',
+            plan: {
+              steps: [
+                { id: '1', description: 'Analyze request', status: 'completed' },
+                { id: '2', description: 'Generate response', status: 'in_progress' },
+                { id: '3', description: 'Format output', status: 'pending' }
+              ]
+            }
+          }
+        }
+      };
+
+      const result = Schemas['acp:prompt:update'].safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it('should validate acp:prompt:update with available_commands', () => {
+      const message = {
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        type: 'acp:prompt:update',
+        timestamp: Date.now(),
+        payload: {
+          sessionId: 'sess-123',
+          requestId: 'req-123',
+          update: {
+            kind: 'available_commands',
+            availableCommands: [
+              {
+                name: 'create_plan',
+                description: 'Create an execution plan',
+                arguments: [
+                  { name: 'task', description: 'Task description', required: true }
+                ]
+              }
+            ]
+          }
+        }
+      };
+
+      const result = Schemas['acp:prompt:update'].safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it('should validate acp:prompt:update with current_mode_update', () => {
+      const message = {
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        type: 'acp:prompt:update',
+        timestamp: Date.now(),
+        payload: {
+          sessionId: 'sess-123',
+          requestId: 'req-123',
+          update: {
+            kind: 'current_mode_update',
+            currentMode: 'plan'
+          }
+        }
+      };
+
+      const result = Schemas['acp:prompt:update'].safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
+    it('should validate acp:prompt:update with config_options', () => {
+      const message = {
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        type: 'acp:prompt:update',
+        timestamp: Date.now(),
+        payload: {
+          sessionId: 'sess-123',
+          requestId: 'req-123',
+          update: {
+            kind: 'config_options',
+            configOptions: [
+              { key: 'model', value: 'claude-3-5-sonnet' },
+              { key: 'temperature', value: 0.7 }
+            ]
+          }
+        }
+      };
+
+      const result = Schemas['acp:prompt:update'].safeParse(message);
+      expect(result.success).toBe(true);
+    });
+
     it('should validate acp:permission:request', () => {
       const message = {
         id: '550e8400-e29b-41d4-a716-446655440000',
