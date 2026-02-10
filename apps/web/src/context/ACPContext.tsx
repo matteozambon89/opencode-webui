@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode, type FC } from 'react';
 import { useWebSocket } from './WebSocketContext';
-import type { ChatMessage, Session, AgentMode, MessagePhase, ThoughtPhase, ToolCallPhase, ResponsePhase } from '@opencode/shared';
+import type { ChatMessage, Session, AgentMode, MessagePhase, ThoughtPhase, ToolCallPhase, ResponsePhase, PlanPhase } from '@opencode/shared';
 import type { AuthMethod } from '@opencode/shared';
 
 interface ACPContextType {
@@ -35,6 +35,10 @@ interface ACPContextType {
     options: Array<{ optionId: string; title: string; description: string }>;
   } | null;
   respondToPermission: (optionId: string) => void;
+  // Available commands
+  availableCommands: Array<{ name: string; description: string; arguments?: Array<{ name: string; description: string; required: boolean }> }>;
+  // Current plan
+  currentPlan: { steps: Array<{ id: string; description: string; status?: 'pending' | 'in_progress' | 'completed' | 'failed' }> } | null;
 }
 
 const ACPContext = createContext<ACPContextType | undefined>(undefined);
@@ -68,6 +72,12 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
 
   // Permission request state
   const [pendingPermissionRequest, setPendingPermissionRequest] = useState<ACPContextType['pendingPermissionRequest']>(null);
+
+  // Available commands state (from ACP)
+  const [availableCommands, setAvailableCommands] = useState<Array<{ name: string; description: string; arguments?: Array<{ name: string; description: string; required: boolean }> }>>([]);
+
+  // Plan state (from ACP)
+  const [currentPlan, setCurrentPlan] = useState<{ steps: Array<{ id: string; description: string; status?: 'pending' | 'in_progress' | 'completed' | 'failed' }> } | null>(null);
 
   // Track processed message IDs to prevent duplicate processing
   const processedMessageIds = useRef<Set<string>>(new Set());
@@ -314,6 +324,80 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
               }
               // Update state to trigger re-render
               setStreamingPhases([...phasesRef.current]);
+            }
+          }
+        } else if (updateKind === 'plan') {
+          console.log('[ACPContext] Processing plan');
+          const planUpdate = update as { plan?: { steps: Array<{ id: string; description: string; status?: 'pending' | 'in_progress' | 'completed' | 'failed' }> } };
+          const plan = planUpdate.plan;
+          if (plan?.steps) {
+            setCurrentPlan(plan);
+
+            // Add or update plan phase
+            const existingPlanPhase = phasesRef.current.find(
+              (p): p is PlanPhase => p.type === 'plan'
+            );
+            if (existingPlanPhase) {
+              existingPlanPhase.steps = plan.steps;
+            } else {
+              const planPhase: PlanPhase = {
+                type: 'plan',
+                id: crypto.randomUUID(),
+                steps: plan.steps,
+                timestamp: new Date(),
+                isExpanded: true,
+              };
+              phasesRef.current.push(planPhase);
+            }
+            // Update state to trigger re-render
+            setStreamingPhases([...phasesRef.current]);
+          }
+        } else if (updateKind === 'available_commands') {
+          console.log('[ACPContext] Processing available_commands');
+          const commandsUpdate = update as { availableCommands?: Array<{ name: string; description: string; arguments?: Array<{ name: string; description: string; required: boolean }> }> };
+          const commands = commandsUpdate.availableCommands;
+          if (Array.isArray(commands)) {
+            setAvailableCommands(commands);
+
+            // Add or update available commands phase
+            const existingCommandsPhase = phasesRef.current.find(
+              (p): p is import('@opencode/shared').AvailableCommandsPhase => p.type === 'available_commands'
+            );
+            if (existingCommandsPhase) {
+              existingCommandsPhase.commands = commands;
+            } else {
+              const commandsPhase: import('@opencode/shared').AvailableCommandsPhase = {
+                type: 'available_commands',
+                id: crypto.randomUUID(),
+                commands: commands,
+                timestamp: new Date(),
+              };
+              phasesRef.current.push(commandsPhase);
+            }
+            // Update state to trigger re-render
+            setStreamingPhases([...phasesRef.current]);
+          }
+        } else if (updateKind === 'current_mode_update') {
+          console.log('[ACPContext] Processing current_mode_update');
+          const modeUpdate = update as { currentMode?: string };
+          const mode = modeUpdate.currentMode as AgentMode;
+          if (mode === 'plan' || mode === 'build') {
+            setAgentMode(mode);
+          }
+        } else if (updateKind === 'config_options') {
+          console.log('[ACPContext] Processing config_options');
+          const configUpdate = update as { configOptions?: Array<{ key: string; value: unknown }> };
+          const configOptions = configUpdate.configOptions;
+          if (Array.isArray(configOptions)) {
+            // Extract model-related config options
+            const modelConfig = configOptions.find((opt) => opt.key === 'model');
+            if (modelConfig?.value && typeof modelConfig.value === 'string') {
+              setSelectedModel(modelConfig.value);
+            }
+
+            const availableModelsConfig = configOptions.find((opt) => opt.key === 'availableModels');
+            if (availableModelsConfig?.value && Array.isArray(availableModelsConfig.value)) {
+              setAvailableModels(availableModelsConfig.value as string[]);
             }
           }
         }
@@ -599,7 +683,7 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
     if (cwd) payload.cwd = cwd;
     if (model) payload.model = model;
 
-    sendMessage('acp:session:create:request', Object.keys(payload).length > 0 ? payload : undefined);
+    sendMessage('acp:session:create:request', Object.keys(payload).length > 0 ? payload : {});
 
     // Return null here - the session ID will come via acp:session:create:success
     return null;
@@ -780,6 +864,10 @@ export const ACPProvider: FC<ACPProviderProps> = ({ children }) => {
     // Permission requests
     pendingPermissionRequest,
     respondToPermission,
+    // Available commands
+    availableCommands,
+    // Current plan
+    currentPlan,
   };
 
   return <ACPContext.Provider value={value}>{children}</ACPContext.Provider>;
