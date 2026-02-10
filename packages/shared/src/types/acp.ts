@@ -172,9 +172,7 @@ export interface AgentThoughtChunk {
   thought: string;
 }
 
-export interface PlanStep {
-  steps: string[];
-}
+
 
 export type SessionUpdateKind = 
   | 'agent_message_chunk' 
@@ -185,7 +183,7 @@ export type SessionUpdateKind =
 
 export interface SessionUpdate {
   kind: SessionUpdateKind;
-  content: AgentMessageChunk | AgentThoughtChunk | ToolCall | ToolCallUpdate | PlanStep;
+  content: AgentMessageChunk | AgentThoughtChunk | ToolCall | ToolCallUpdate | { steps: Array<{ id: string; description: string }> };
 }
 
 export interface SessionUpdateNotification {

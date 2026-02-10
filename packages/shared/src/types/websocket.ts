@@ -78,7 +78,40 @@ export interface ResponsePhase {
   timestamp: Date;
 }
 
-export type MessagePhase = ThoughtPhase | ToolCallPhase | ResponsePhase;
+// Plan Phase - for displaying execution plans
+export interface PlanStepInfo {
+  id: string;
+  description: string;
+  status?: 'pending' | 'in_progress' | 'completed' | 'failed';
+}
+
+export interface PlanPhase {
+  type: 'plan';
+  id: string;
+  steps: PlanStepInfo[];
+  timestamp: Date;
+  isExpanded?: boolean;
+}
+
+// Available Commands Phase - for displaying slash commands
+export interface AvailableCommandInfo {
+  name: string;
+  description: string;
+  arguments?: Array<{
+    name: string;
+    description: string;
+    required: boolean;
+  }>;
+}
+
+export interface AvailableCommandsPhase {
+  type: 'available_commands';
+  id: string;
+  commands: AvailableCommandInfo[];
+  timestamp: Date;
+}
+
+export type MessagePhase = ThoughtPhase | ToolCallPhase | ResponsePhase | PlanPhase | AvailableCommandsPhase;
 
 // Streaming Content
 export interface StreamingContent {

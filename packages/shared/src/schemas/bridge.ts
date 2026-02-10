@@ -313,11 +313,63 @@ export const ToolCallUpdateSchema = z.object({
   })
 });
 
+// Plan update schema
+export const PlanStepSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  status: z.enum(['pending', 'in_progress', 'completed', 'failed']).optional()
+});
+
+export const PlanSchema = z.object({
+  kind: z.literal('plan'),
+  plan: z.object({
+    steps: z.array(PlanStepSchema)
+  })
+});
+
+// Available commands schema
+export const AvailableCommandSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  arguments: z.array(z.object({
+    name: z.string(),
+    description: z.string(),
+    required: z.boolean()
+  })).optional()
+});
+
+export const AvailableCommandsSchema = z.object({
+  kind: z.literal('available_commands'),
+  availableCommands: z.array(AvailableCommandSchema)
+});
+
+// Current mode update schema
+export const CurrentModeUpdateSchema = z.object({
+  kind: z.literal('current_mode_update'),
+  currentMode: z.string()
+});
+
+// Config options schema
+export const ConfigOptionSchema = z.object({
+  key: z.string(),
+  value: z.unknown(),
+  description: z.string().optional()
+});
+
+export const ConfigOptionsSchema = z.object({
+  kind: z.literal('config_options'),
+  configOptions: z.array(ConfigOptionSchema)
+});
+
 export const PromptUpdateKind = z.discriminatedUnion('kind', [
   AgentMessageChunkSchema,
   ThoughtChunkSchema,
   ToolCallSchema,
-  ToolCallUpdateSchema
+  ToolCallUpdateSchema,
+  PlanSchema,
+  AvailableCommandsSchema,
+  CurrentModeUpdateSchema,
+  ConfigOptionsSchema
 ]);
 
 export const AcpPromptUpdate = BridgeMessage.extend({
@@ -461,6 +513,15 @@ export type ResourceContent = z.infer<typeof ResourceContent>;
 // Tool type exports
 export type ToolCall = z.infer<typeof ToolCallSchema>;
 export type ToolCallUpdate = z.infer<typeof ToolCallUpdateSchema>;
+
+// Update type exports
+export type PlanStep = z.infer<typeof PlanStepSchema>;
+export type PlanUpdate = z.infer<typeof PlanSchema>;
+export type AvailableCommand = z.infer<typeof AvailableCommandSchema>;
+export type AvailableCommandsUpdate = z.infer<typeof AvailableCommandsSchema>;
+export type CurrentModeUpdate = z.infer<typeof CurrentModeUpdateSchema>;
+export type ConfigOption = z.infer<typeof ConfigOptionSchema>;
+export type ConfigOptionsUpdate = z.infer<typeof ConfigOptionsSchema>;
 
 // Specific message type exports
 export type ConnectionEstablishedSuccessMessage = z.infer<typeof ConnectionEstablishedSuccess>;
