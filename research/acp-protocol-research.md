@@ -66,6 +66,7 @@ sequenceDiagram
     end
     
     A-->>C: PromptResponse (stopReason)
+```
 
 ---
 
@@ -227,7 +228,7 @@ stateDiagram-v2
 
 ## 4. Event Types & Payloads
 
-### 3.1 Connection-Level Events
+### 4.1 Connection-Level Events
 
 #### `initialize`
 
@@ -314,7 +315,7 @@ stateDiagram-v2
 
 ---
 
-### 3.2 Session Management Events
+### 4.2 Session Management Events
 
 #### `session/new`
 
@@ -411,7 +412,7 @@ stateDiagram-v2
 
 ---
 
-### 3.3 Prompt & Message Events
+### 4.3 Prompt & Message Events
 
 #### `session/prompt`
 
@@ -662,7 +663,7 @@ graph TD
 
 ---
 
-### 3.4 Permission Events
+### 4.4 Permission Events
 
 #### `session/request_permission` (Agent → Client)
 
@@ -754,7 +755,7 @@ sequenceDiagram
 
 ---
 
-### 3.5 File System Events
+### 4.5 File System Events
 
 #### `fs/read_text_file`
 
@@ -819,7 +820,7 @@ sequenceDiagram
 
 ---
 
-### 3.6 Terminal Events
+### 4.6 Terminal Events
 
 #### `terminal/create`
 
@@ -961,7 +962,7 @@ sequenceDiagram
 
 ---
 
-### 3.7 Session Mode Events
+### 4.7 Session Mode Events
 
 #### `session/set_mode`
 
@@ -991,7 +992,7 @@ sequenceDiagram
 
 ---
 
-### 3.8 Session Configuration Events
+### 4.8 Session Configuration Events
 
 #### `session/set_config_option`
 
